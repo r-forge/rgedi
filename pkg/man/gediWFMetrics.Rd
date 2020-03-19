@@ -303,7 +303,7 @@ rm(list=ls())
 
 libsAvailable = require(lidR) && require(plot3D)
 if (libsAvailable) {
-outdir = tmpdir()
+outdir = tempdir()
 
 # Specifying the path to ALS data (zip)
 alsfile_Amazon_zip <- system.file("extdata", "Amazon.zip", package="rGEDI")
