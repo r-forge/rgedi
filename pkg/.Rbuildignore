@@ -14,3 +14,4 @@
 ^doc$
 ^.*\.dll$
 ^.*\.o$
+^configure\.ac$

@@ -30,10 +30,10 @@
 #'level2a<-readLevel2A(level2Apath=level2Apath)
 #'
 #'# Bounding rectangle coordinates
-#'xmin = -44.10136
-#'xmax = -44.10066
-#'ymin = -13.73031
-#'ymax = -13.72044
+#'xmin=-44.13
+#'xmax=-44.12
+#'ymin=-13.74
+#'ymax=-13.73
 #'
 #'# Specifying output file and path
 #'output<-file.path(getwd(),"GEDI02_A_2019108080338_O01964_T05337_02_001_01_clip.h5")
@@ -46,10 +46,8 @@
 #'}
 #'@export
 clipLevel2A = function(level2a, xmin, xmax, ymin, ymax, output=""){
-  if (output == "") {
-    output = tempfile(fileext = ".h5")
-  }
-  output = fs::path_ext_set(output, "h5")
+  output = checkOutput(output)
+  checkClipExtentInputs(level2a, "gedi.level2a", xmin, xmax, ymin, ymax)
 
   # Get all spatial data as a list of dataframes with spatial information
   spData = getSpatialData2A(level2a)
@@ -116,9 +114,7 @@ clipLevel2A = function(level2a, xmin, xmax, ymin, ymax, output=""){
 #'@export
 clipLevel2AGeometry = function(level2a, polygon_spdf, output="", split_by = NULL) {
   output = checkOutput(output)
-  stopifnotMessage(
-    "split_by not in polygon_spdf"=is.null(split_by) || split_by %in% colnames(polygon_spdf@data)
-  )
+  checkClipGeoInputs(level2a, "gedi.level2a", polygon_spdf, split_by)
 
   spData = getSpatialData2A(level2a)
 

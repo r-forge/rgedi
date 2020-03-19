@@ -29,10 +29,10 @@
 #'level2b<-readLevel2B(level2Bpath=level2Bpath)
 #'
 #'# Bounding rectangle coordinates
-#'xmin = -44.10136
-#'xmax = -44.10066
-#'ymin = -13.73031
-#'ymax = -13.72044
+#'xmin=-44.13
+#'xmax=-44.12
+#'ymin=-13.74
+#'ymax=-13.73
 #'
 #'# Specifying output file and path
 #'output<-file.path(getwd(),"GEDI02_B_2019108080338_O01964_T05337_02_001_01_clip")
@@ -47,6 +47,7 @@
 clipLevel2B = function(level2b, xmin, xmax, ymin, ymax, output=""){
   # Get all spatial data as a list of dataframes with spatial information
   spData = getSpatialData2B(level2b)
+  checkClipExtentInputs(level2b, "gedi.level2b", xmin, xmax, ymin, ymax)
 
   masks = clipSpDataByExtentLevelB(spData, xmin, xmax, ymin, ymax)
 
@@ -114,6 +115,8 @@ clipLevel2B = function(level2b, xmin, xmax, ymin, ymax, output=""){
 #'@export
 clipLevel2BGeometry = function(level2b, polygon_spdf, output="", split_by=NULL) {
   output = checkOutput(output)
+  checkClipGeoInputs(level2b, "gedi.level2b", polygon_spdf, split_by)
+
   spData = getSpatialData2B(level2b)
 
   xmin = polygon_spdf@bbox[1,1]
