@@ -55,7 +55,7 @@ clipLevel2AM = function(level2AM,xmin, xmax, ymin, ymax){
     level2AM$lon_lowestmode <= xmax &
     level2AM$lat_lowestmode >= ymin &
     level2AM$lat_lowestmode <=  ymax
-
+  mask[!complete.cases(mask)] = FALSE
   mask = (1:length(level2AM$lat_lowestmode))[mask]
   newFile<-level2AM[mask,]
   #newFile<- new("gedi.level1b.dt", dt = level1bdt[mask,])
