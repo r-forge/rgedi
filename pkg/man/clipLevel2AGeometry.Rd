@@ -18,13 +18,15 @@ which can be loaded as an ESRI shapefile using \code{\link[raster:shapefile]{ras
 \item{split_by}{Polygon id. If defined, GEDI data will be clipped by each polygon using the attribute specified by \code{split_by} from the attribute table.}
 }
 \value{
-Returns a list of S4 object of class "gedi.level2a".
+Returns a list of S4 object of class "gedi.level2a" containing clipped GEDI Level2A data.
 }
 \description{
 This function clips GEDI Level2A data within a given geometry
 }
 \examples{
 \donttest{
+outdir = tempdir()
+
 # Specifying the path to GEDI level2A data (zip file)
 level2A_fp_zip <- system.file("extdata",
                   "GEDI02_A_2019108080338_O01964_T05337_02_001_01_sub.zip",
@@ -44,7 +46,7 @@ library(raster)
 polygon_spdf<-shapefile(polygon_filepath)
 
 # Specifying output file and path
-output<-file.path(getwd(),"GEDI02_A_2019108080338_O01964_T05337_02_001_01_clip")
+output<-file.path(outdir,"GEDI02_A_2019108080338_O01964_T05337_02_001_01_clip")
 
 # Clipping GEDI Level2A data by geometry
 level2a_clip <- clipLevel2AGeometry(level2a, polygon_spdf = polygon_spdf,

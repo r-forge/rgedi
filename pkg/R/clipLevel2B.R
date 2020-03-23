@@ -11,12 +11,14 @@
 #'@param ymax Numeric. North latitude (y) coordinate of the bounding rectangle, in decimal degrees.
 #'@param output Optional character path where to save the new hdf5 file. The default stores a temporary file only.
 #'
-#'@return Returns a list of S4 object of class "gedi.level2b".
+#'@return Returns a list of S4 object of class "gedi.level2b" containing clipped GEDI Level2B data.
 #'
 #'@seealso https://lpdaac.usgs.gov/products/gedi01_bv001/
 #'
 #'@examples
 #'\donttest{
+#'outdir = tempdir()
+#'
 #'# Specifying the path to GEDI level2B data (zip file)
 #'level2B_fp_zip <- system.file("extdata",
 #'                   "GEDI02_B_2019108080338_O01964_T05337_02_001_01_sub.zip",
@@ -35,7 +37,7 @@
 #'ymax=-13.73
 #'
 #'# Specifying output file and path
-#'output<-file.path(getwd(),"GEDI02_B_2019108080338_O01964_T05337_02_001_01_clip")
+#'output<-file.path(outdir,"GEDI02_B_2019108080338_O01964_T05337_02_001_01_clip")
 #'
 #'# Clipping GEDI data by extent boundary box
 #'level2b_clip <- clipLevel2B(level2b, xmin, xmax, ymin, ymax)
@@ -77,12 +79,14 @@ clipLevel2B = function(level2b, xmin, xmax, ymin, ymax, output=""){
 #'@param output optional character path where to save the new h5file. Default "" (temporary file).
 #'@param split_by Polygon id. If defined, GEDI data will be clipped by each polygon using the attribute specified by \code{split_by} from the attribute table.
 #'
-#'@return Returns a list of S4 objects of class "gedi.level2b".
+#'@return Returns a list of S4 objects of class "gedi.level2b" containing clipped GEDI Level2B data.
 #'
 #'@seealso https://lpdaac.usgs.gov/products/gedi01_bv001/
 #'
 #'@examples
 #'\donttest{
+#'outdir = tempdir()
+#'
 #'# Specifying the path to GEDI level2B data (zip file)
 #'level2B_fp_zip <- system.file("extdata",
 #'                   "GEDI02_B_2019108080338_O01964_T05337_02_001_01_sub.zip",
@@ -102,7 +106,7 @@ clipLevel2B = function(level2b, xmin, xmax, ymin, ymax, output=""){
 #'polygon_spdf<-shapefile(polygon_filepath)
 #'
 #'# Specifying output file and path
-#'output<-file.path(getwd(),"GEDI02_B_2019108080338_O01964_T05337_02_001_01_clip")
+#'output<-file.path(outdir,"GEDI02_B_2019108080338_O01964_T05337_02_001_01_clip")
 #'
 #'# Clipping GEDI data by extent boundary box
 #'level2b_clip <- clipLevel2BGeometry(level2b, polygon_spdf = polygon_spdf,
@@ -235,7 +239,7 @@ clipByMask2B = function(level2b, masks, output = "") {
         }
         hdf5r::createDataSet(newFile,dt,h5_dt[,mask], dtype=dtype, chunk_dim=chunkdims)
       } else {
-        stop(paste0("Don't know how to treat dataset: ", dt, "\nContact the maintainer of the package!"))
+        stop(paste0("Don't know how to handle dataset: ", dt, "\nContact the maintainer of the package!"))
       }
 
       #Update progress

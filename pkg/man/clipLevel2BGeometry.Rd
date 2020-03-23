@@ -4,7 +4,8 @@
 \alias{clipLevel2BGeometry}
 \title{Clip GEDI Level2B data by geometry}
 \usage{
-clipLevel2BGeometry(level2b, polygon_spdf, output = "", split_by = NULL)
+clipLevel2BGeometry(level2b, polygon_spdf, output = "",
+  split_by = NULL)
 }
 \arguments{
 \item{level2b}{A GEDI Level2B object (output of \code{\link[rGEDI:readLevel2B]{readLevel2B}} function).
@@ -18,13 +19,15 @@ which can be loaded as an ESRI shapefile using \code{\link[raster:shapefile]{ras
 \item{split_by}{Polygon id. If defined, GEDI data will be clipped by each polygon using the attribute specified by \code{split_by} from the attribute table.}
 }
 \value{
-Returns a list of S4 objects of class "gedi.level2b".
+Returns a list of S4 objects of class "gedi.level2b" containing clipped GEDI Level2B data.
 }
 \description{
 This function extracts GEDI Level1B data within a given geometry
 }
 \examples{
 \donttest{
+outdir = tempdir()
+
 # Specifying the path to GEDI level2B data (zip file)
 level2B_fp_zip <- system.file("extdata",
                   "GEDI02_B_2019108080338_O01964_T05337_02_001_01_sub.zip",
@@ -44,7 +47,7 @@ library(raster)
 polygon_spdf<-shapefile(polygon_filepath)
 
 # Specifying output file and path
-output<-file.path(getwd(),"GEDI02_B_2019108080338_O01964_T05337_02_001_01_clip")
+output<-file.path(outdir,"GEDI02_B_2019108080338_O01964_T05337_02_001_01_clip")
 
 # Clipping GEDI data by extent boundary box
 level2b_clip <- clipLevel2BGeometry(level2b, polygon_spdf = polygon_spdf,

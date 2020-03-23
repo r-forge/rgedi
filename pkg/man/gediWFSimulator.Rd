@@ -4,39 +4,16 @@
 \alias{gediWFSimulator}
 \title{GEDI full waveform data simulation}
 \usage{
-gediWFSimulator(
-  input,
-  output,
-  waveID = NULL,
-  coords = NULL,
-  listCoord = NULL,
-  gridBound = NULL,
-  gridStep = 30,
-  pSigma = -1,
-  pFWHM = 15,
-  readPulse = NULL,
-  fSigma = 5.5,
-  wavefront = NULL,
-  res = 0.15,
-  topHat = FALSE,
-  sideLobe = FALSE,
-  lobeAng = 0,
-  checkCover = FALSE,
-  maxScanAng = 1e+06,
-  decimate = 1,
-  pBuff = as.integer(2e+08),
-  maxBins = as.integer(1024),
-  countOnly = FALSE,
-  pulseAfter = FALSE,
-  pulseBefore = TRUE,
-  noNorm = FALSE,
-  noOctree = FALSE,
-  octLevels = as.integer(0),
-  nOctPix = as.integer(40),
-  keepOld = FALSE,
-  useShadow = FALSE,
-  polyGround = FALSE
-)
+gediWFSimulator(input, output, waveID = NULL, coords = NULL,
+  listCoord = NULL, gridBound = NULL, gridStep = 30, pSigma = -1,
+  pFWHM = 15, readPulse = NULL, fSigma = 5.5, wavefront = NULL,
+  res = 0.15, topHat = FALSE, sideLobe = FALSE, lobeAng = 0,
+  checkCover = FALSE, maxScanAng = 1e+06, decimate = 1,
+  pBuff = as.integer(2e+08), maxBins = as.integer(1024),
+  countOnly = FALSE, pulseAfter = FALSE, pulseBefore = TRUE,
+  noNorm = FALSE, noOctree = FALSE, octLevels = as.integer(0),
+  nOctPix = as.integer(40), keepOld = FALSE, useShadow = FALSE,
+  polyGround = FALSE)
 }
 \arguments{
 \item{input}{character vector. lasfile input filename}
@@ -110,7 +87,8 @@ Using full waveform input data (not tested)}
 #'}
 }
 \value{
-An S4 object of class \code{\link[hdf5r:H5File-class]{hdf5r::H5File}} in the \emph{hdf5r} package.
+Returns an S4 object of class \code{\link[hdf5r:H5File-class]{hdf5r::H5File}} form the \emph{hdf5r} package
+containing the simulated GEDI full-waveform.
 }
 \description{
 Simulate GEDI full waveform data from Airborne Laser Scanning (ALS) 3D point cloud
@@ -154,6 +132,7 @@ wf_Savanna<-gediWFSimulator(input=alsfile_Savanna_filepath,
 
 # Plot ALS and GEDI simulated full waveform
 
+oldpar<-par()
 par(mfrow=c(2,2), mar=c(4,4,0,0), oma=c(0,0,1,1),cex.axis = 1.2)
 scatter3D(
          als_Amazon@data$X,als_Amazon@data$Y,als_Amazon@data$Z,
@@ -175,6 +154,8 @@ scatter3D(
 plot(wf_Savanna, relative=TRUE, polygon=TRUE, type="l", lwd=2, col="green",
     xlab="Waveform Amplitude (\%)", ylab="Elevation (m)", ylim=c(815,835))
 grid()
+
+par(oldpar)
 
 close(wf_Amazon)
 close(wf_Savanna)

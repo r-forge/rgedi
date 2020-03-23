@@ -21,13 +21,15 @@ An S4 object of class "gedi.level2a".}
 \item{output}{Optional character path where to save the new hdf5file. The default stores a temporary file only.}
 }
 \value{
-Returns a list of S4 objects of class "gedi.level2a".
+Returns a list of S4 objects of class "gedi.level2a" containing clipped GEDI Level2A data.
 }
 \description{
 This function clips GEDI Level2A data within a given bounding coordinates
 }
 \examples{
 \donttest{
+outdir = tempdir()
+
 # Specifying the path to GEDI level2A data (zip file)
 level2A_fp_zip <- system.file("extdata",
                   "GEDI02_A_2019108080338_O01964_T05337_02_001_01_sub.zip",
@@ -46,7 +48,7 @@ ymin=-13.74
 ymax=-13.73
 
 # Specifying output file and path
-output<-file.path(getwd(),"GEDI02_A_2019108080338_O01964_T05337_02_001_01_clip.h5")
+output<-file.path(outdir,"GEDI02_A_2019108080338_O01964_T05337_02_001_01_clip.h5")
 
 # Clipping GEDI Level2A data by boundary box extent
 level2a_clip <- clipLevel2A(level2a,xmin,xmax,ymin,ymax,output)
