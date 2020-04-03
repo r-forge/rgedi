@@ -1,7 +1,7 @@
 ![](https://github.com/carlos-alberto-silva/rGEDI/blob/master/readme/fig1.png)<br/>
 
 [![CRAN](https://www.r-pkg.org/badges/version/rGEDI)](https://cran.r-project.org/package=rGEDI)
-![Github](https://img.shields.io/badge/Github-0.1.2-green.svg)
+![Github](https://img.shields.io/badge/Github-0.1.3-green.svg)
 ![licence](https://img.shields.io/badge/Licence-GPL--3-blue.svg) 
 ![Downloads](https://cranlogs.r-pkg.org/badges/grand-total/rGEDI)
 [![Build Status](https://travis-ci.com/carlos-alberto-silva/rGEDI.svg?token=Jqizwyc6gBxNafNccTdU&branch=master)](https://travis-ci.com/carlos-alberto-silva/rGEDI)
@@ -17,7 +17,7 @@ The rGEDI package provides functions for i) downloading, ii) visualizing, iii) c
 ## Installation
 ```r
 #The CRAN version:
-#install.packages("rGEDI") **...will be available soon**
+install.packages("rGEDI")
 
 #The development version:
 library(devtools)
@@ -36,10 +36,13 @@ lr_lat<- -44.17246
 ul_lon<- -13.76913
 lr_lon<- -13.67646
 
+# Specifying the date range
+daterange=c("2019-07-01","2020-05-22")
+
 # Get path to GEDI data
-gLevel1B<-gedifinder(product="GEDI01_B",ul_lat, ul_lon, lr_lat, lr_lon,version="001")
-gLevel2A<-gedifinder(product="GEDI02_A",ul_lat, ul_lon, lr_lat, lr_lon,version="001")
-gLevel2B<-gedifinder(product="GEDI02_B",ul_lat, ul_lon, lr_lat, lr_lon,version="001")
+gLevel1B<-gedifinder(product="GEDI01_B",ul_lat, ul_lon, lr_lat, lr_lon,version="001",daterange=daterange)
+gLevel2A<-gedifinder(product="GEDI02_A",ul_lat, ul_lon, lr_lat, lr_lon,version="001",daterange=daterange)
+gLevel2B<-gedifinder(product="GEDI02_B",ul_lat, ul_lon, lr_lat, lr_lon,version="001",daterange=daterange)
 ```
 ## Downloading GEDI data
 ```r
