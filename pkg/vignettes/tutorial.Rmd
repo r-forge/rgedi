@@ -558,11 +558,9 @@ levelplot(rh100metrics,
 ```
 
 ```{r, fig.width=7, fig.heiglht=3, echo=FALSE, eval=TRUE}
-rasterVisLoaded = TRUE
-tryCatch({
-  library(rasterVis)
-  library(viridis)
+rasterVisLoaded = require(rasterVis) & require(viridis)
 
+if (rasterVisLoaded) {
   levelplot(rh100metrics,
                     layout=c(4, 1),
                     margin=FALSE,
@@ -581,10 +579,7 @@ tryCatch({
                     col.regions=viridis,
                     at=seq(0, 18, len=101),
                     names.attr=c("rh100 min","rh100 max","rh100 mean", "rh100 sd"))
-}, error = function(err) {
-  message(err)
-  rasterVisLoaded = FALSE
-})
+}
 ```
 
 
