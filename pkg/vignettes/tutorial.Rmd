@@ -103,20 +103,27 @@ gediDownload(filepath=gLevel2B,outdir=outdir)
 #** Herein, we are using only a GEDI sample dataset for this tutorial.
 # downloading zip file
 zipfile = file.path(outdir, "examples.zip")
-download.file("https://github.com/carlos-alberto-silva/rGEDI/releases/download/datasets/examples.zip",destfile=zipfile)
+download.file("https://github.com/carlos-alberto-silva/rGEDI/releases/download/datasets/examples.zip", destfile=zipfile)
 
 # unzip file
 unzip(zipfile, exdir=outdir)
 ```
 ```{r, echo = FALSE, results="hide"}
 zipfile = file.path(outdir, "examples.zip")
-if (!file.exists(zipfile)) {
-  res=download.file(
-    url="https://github.com/carlos-alberto-silva/rGEDI/releases/download/datasets/examples.zip", 
-    destfile=zipfile
-  )
-}
-unzip(zipfile, exdir=outdir)
+
+tryCatch({
+  if (!file.exists(zipfile)) {
+    res=download.file(
+      url="https://github.com/carlos-alberto-silva/rGEDI/releases/download/datasets/examples.zip", 
+      destfile=zipfile,
+      timeout=600
+    )
+  }
+  unzip(zipfile, exdir=outdir)
+}, error=function(e) {
+  message("Could not download the example file, vignette is aborting")
+  knitr::opts_chunk$set(eval=FALSE)
+})
 ```
 
 
@@ -710,7 +717,7 @@ Please report any issue reagardling the rGEDI package herein https://groups.yaho
 
 # Citing rGEDI
 Silva,C.A; Hamamura,C.; Valbuena, R.; Hancock,S.; Cardil,A.; Broadbent, E. N.; Almeida,D.R.A.; Silva Junior, C.H.L; Klauberg, C. rGEDI: NASA's Global Ecosystem Dynamics Investigation (GEDI) Data Visualization and Processing.
-version 0.1.2, accessed on April. 1 2020, available at: <https://CRAN.R-project.org/package=rGEDI>
+version 0.1.8, accessed on October. 22 2020, available at: <https://CRAN.R-project.org/package=rGEDI>
 
 # Disclaimer
 **rGEDI package has not been developted by the GEDI team. It comes with no guarantee, expressed or implied, and the authors hold no responsibility for its use or reliability of its outputs.**
