@@ -45,7 +45,6 @@ echo $contents; } ?>
 
 <!-- end of project description -->
 
-<hr />
 <div class="Box-body px-5 pb-5">
         <article class="markdown-body entry-content container-lg" itemprop="text">
             <p>
