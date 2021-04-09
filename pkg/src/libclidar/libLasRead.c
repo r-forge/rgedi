@@ -320,6 +320,7 @@ int readLasPoint(lasFile *las,uint32_t j)
     nFilesOpen--;
   }
 
+  /*offset to start of this point record*/
   offTo=(uint64_t)(j-las->buffStart)*(uint64_t)las->pRecLen;
 
   /*point format 3 and 4*/
@@ -369,6 +370,16 @@ int readLasPoint(lasFile *las,uint32_t j)
 
   memcpy(&las->psID,&las->pointBuff[offset],2);
   offset+=2;
+  /*GPS time*/
+  memcpy(&las->gpsTime,&las->pointBuff[offset],8);
+  offset+=8;
+
+  if((las->pointFormat==3)||(las->pointFormat==10)||(las->pointFormat==8)||(las->pointFormat==7)||(las->pointFormat==5)){  /*there is RGB*/
+    for(j=0;j<3;j++){
+      memcpy(&(las->RGB[j]),&las->pointBuff[offset],2);
+      offset+=2;
+    }
+  }/*there is RGB*/
 
   if((las->pointFormat==4)||(las->pointFormat==5)||(las->pointFormat==9)||(las->pointFormat==10)){   /*full waveform data*/
     memcpy(&las->packetDes,&las->pointBuff[offset],1);
@@ -702,7 +713,7 @@ double **readCoordList(int nFiles,char **nameList,char *coordNamen)
     return(NULL);
   }
   ASSIGN_CHECKNULL_RETNULL(coords,dDalloc(nFiles,"coords",0));
-  for(i=0;i<nFiles;i++)ASSIGN_CHECKNULL_RETNULL(coords[i],dalloc(3,"coords",i+1));
+  for(i=0;i<nFiles;i++) { ASSIGN_CHECKNULL_RETNULL(coords[i],dalloc(3,"coords",i+1)); }
 
   while(fgets(line,200,ipoo)!=NULL){
     if(strncasecmp(line,"#",1)){

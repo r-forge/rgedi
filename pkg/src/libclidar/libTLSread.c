@@ -5,11 +5,13 @@
 #include "inttypes.h"
 #include "float.h"
 #include "tools.h"
+#include "hdf5.h"
 #include "functionWrappers.h"
 #include "libLasRead.h"
 #include "libDEMhandle.h"
+#include "libLasProcess.h"
 #include "libLidVoxel.h"
-
+#include "libLidarHDF.h"
 
 /*######################*/
 /*# A library for      #*/
@@ -153,6 +155,105 @@ int writeTLSpointFromBin(char *namen,double *bounds,FILE *opoo)
   TIDY(buffer);
   return(0);
 }/*writeTLSpointFromBin*/
+
+
+/*##################################################################*/
+/*read single TLS scan, all data*/
+
+int readTLSpolarHDF(char *namen,uint32_t place,tlsScan **scan)
+{
+  int tempInt=0;
+  uint8_t *tempU8=NULL,j=0;
+  uint32_t i=0,*tempU32=NULL,tot=0;
+  float *temp=NULL,*temp2=NULL;
+
+  /*is this the first call?*/
+  if((*scan)==NULL){  /*if so, read size and allocate space*/
+    msgf("Reading %s ",namen);
+
+    /*allocate structure and open file*/
+    if(!((*scan)=(tlsScan *)calloc(1,sizeof(tlsScan)))){
+      errorf("error scan allocation.\n");
+      return -1;
+    }
+
+    /*open and read whole file*/
+    (*scan)->hdfFile=H5Fopen(namen,H5F_ACC_RDONLY,H5P_DEFAULT);
+    /*read header*/
+    memcpy(&(*scan)->xOff,read1dDoubleHDF5((*scan)->hdfFile,"XCENT",&tempInt),sizeof(double));
+    memcpy(&(*scan)->yOff,read1dDoubleHDF5((*scan)->hdfFile,"YCENT",&tempInt),sizeof(double));
+    memcpy(&(*scan)->zOff,read1dDoubleHDF5((*scan)->hdfFile,"ZCENT",&tempInt),sizeof(double));
+    memcpy(&(*scan)->nBeams,read1dUint32HDF5((*scan)->hdfFile,"TOTSHOT",&tempInt),sizeof(uint32_t));
+    memcpy(&(*scan)->nPoints,read1dUint32HDF5((*scan)->hdfFile,"TOTHITS",&tempInt),sizeof(uint32_t));
+
+    msgf("There are %u beams\n",(*scan)->nBeams);
+
+    /*allocate space for beams*/
+    if(!((*scan)->beam=(tlsBeam *)calloc((long)(*scan)->nBeams,sizeof(tlsBeam)))){
+      errorf("error beam allocation. Allocating %u\n",(*scan)->nBeams);
+      return -1;
+    }
+
+    temp=read1dFloatHDF5((*scan)->hdfFile,"AZ",&tempInt);
+    for(i=0;i<(*scan)->nBeams;i++)(*scan)->beam[i].az=temp[i]*M_PI/180.0;
+    TIDY(temp);
+    temp=read1dFloatHDF5((*scan)->hdfFile,"ZEN",&tempInt);
+    for(i=0;i<(*scan)->nBeams;i++)(*scan)->beam[i].zen=temp[i]*M_PI/180.0;
+    TIDY(temp);
+    temp=read1dFloatHDF5((*scan)->hdfFile,"X0",&tempInt);
+    for(i=0;i<(*scan)->nBeams;i++)(*scan)->beam[i].x=temp[i];
+    TIDY(temp);
+    temp=read1dFloatHDF5((*scan)->hdfFile,"Y0",&tempInt);
+    for(i=0;i<(*scan)->nBeams;i++)(*scan)->beam[i].y=temp[i];
+    TIDY(temp);
+    temp=read1dFloatHDF5((*scan)->hdfFile,"Z0",&tempInt);
+    for(i=0;i<(*scan)->nBeams;i++)(*scan)->beam[i].z=temp[i];
+    TIDY(temp);
+    tempU32=read1dUint32HDF5((*scan)->hdfFile,"SHOTN",&tempInt);
+    for(i=0;i<(*scan)->nBeams;i++)(*scan)->beam[i].shotN=tempU32[i];
+    TIDY(tempU32);
+    tempU8=read1dUint8HDF5((*scan)->hdfFile,"NHITS",&tempInt);
+    for(i=0;i<(*scan)->nBeams;i++)(*scan)->beam[i].nHits=tempU8[i];
+    TIDY(tempU8);
+
+    /*allocate multiple hits*/
+    temp=read1dFloatHDF5((*scan)->hdfFile,"RANGE",&tempInt);
+    temp2=read1dFloatHDF5((*scan)->hdfFile,"REFL",&tempInt);
+    tot=0;
+    for(i=0;i<(*scan)->nBeams;i++){
+      if((*scan)->beam[i].nHits>0){
+        (*scan)->beam[i].r=falloc((uint64_t)(*scan)->beam[i].nHits,"TLS point range",(int)tot);
+        (*scan)->beam[i].refl=falloc((uint64_t)(*scan)->beam[i].nHits,"TLS point refl",(int)tot);
+
+        for(j=0;j<(*scan)->beam[i].nHits;j++){
+          (*scan)->beam[i].r[j]=temp[tot];
+          (*scan)->beam[i].refl[j]=temp2[tot];
+          tot++;
+        }
+      }
+    }
+
+    /*check total number of hits*/
+    if((*scan)->nPoints!=tot){
+      errorf("Beam counting mismatch %u %u\n",tot,(*scan)->nPoints);
+      return -1;
+    }
+
+    TIDY(temp);
+    TIDY(temp2);
+
+    /*close input*/
+    if(H5Fclose((*scan)->hdfFile)){
+      errorf("Issue closing file\n");
+      return -1;
+    }
+  }else{   /*no need to read more buffer*/
+    return 0;
+  }
+
+
+  return 0;
+}/*readTLSpolarHDF*/
 
 
 /*##################################################################*/
@@ -627,6 +728,7 @@ int noteVoxelGaps(int *voxList,int nIntersect,double *rangeList,voxStruct *vox,t
       }/*hit within voxel check*/
       /*keep track of mean zenith*/
       vox->meanZen[fInd][voxList[k]]+=tempTLS->beam[j].zen;
+      vox->meanRange[fInd][voxList[k]]+=rangeList[k];
     }/*beam made it to voxel check*/
   }/*voxel intersection loop*/
 
@@ -656,9 +758,12 @@ float findGroundRange(tlsBeam *beam,demStruct *dem,float maxR,tlsScan *tls,float
   y=(double)beam->y+tls->yOff;
   z=(double)beam->z+tls->zOff;
 
+  /*set long number*/
+  groundRange=10.0*maxR;
+
   /*will this beam hit the DEM bounding box?*/
   if((vect[2]>=0.0)&&(z>=dem->maxZ)){  /*no possibility of a hit*/
-    groundRange=10.0*maxR;
+
   }else{  /*might intersect*/
     grad[0]=(double)vect[0];
     grad[1]=(double)vect[1];
@@ -674,15 +779,17 @@ float findGroundRange(tlsBeam *beam,demStruct *dem,float maxR,tlsScan *tls,float
 
     /*use voxel intersection, with z flattened*/
     ASSIGN_CHECKNULL_RETFLT(pixList,findVoxels(&grad[0],x,y,0.0,&bounds[0],&vRes[0],&nPix,dem->nX,dem->nY,1,&rangeList));
-    
 
-    /*loop along and see if we hit the DEM*/
-    for(k=0;k<nPix;k++){
-      tZ=z+vect[2]*rangeList[k+1];
+    /*do we intersect DTM?*/
+    if(nPix>0){
+      /*loop along and see if we hit the DEM*/
+      for(k=0;k<nPix;k++){
+        tZ=z+vect[2]*rangeList[k+1];
 
-      if(tZ<=dem->z[pixList[k]]){
-        groundRange=rangeList[k];
-        break;
+        if(tZ<=dem->z[pixList[k]]){
+          groundRange=rangeList[k];
+          break;
+        }
       }
     }
 
@@ -761,14 +868,19 @@ tlsScan *readOneTLS(char *namen,voxStruct *vox,char useFracGap,tlsVoxMap *map,in
   tlsScan *scan=NULL,*tempTLS=NULL;
   int noteVoxelGaps(int *,int,double *,voxStruct *,tlsScan *,uint32_t,float,char,lidVoxPar *,int);
   int saveTLSpoints(tlsScan *,uint32_t,voxStruct *,tlsScan *,double,double,double,tlsVoxMap *,int);
+  int readPTXleica(char *,uint32_t,tlsScan **);
+  int readTLSpolarBinary(char *,uint32_t,tlsScan **);
+  int readTLSpolarHDF(char *,uint32_t,tlsScan **);
   char checkIfPtx(char *);
-  char isPtx=0;  /*ptx file flag*/
+  char checkIfHDF(char *);
+  char isPtx=0,isHDF;  /*file format flags*/
 
   /*is this a ptx file?*/
   isPtx=checkIfPtx(namen);
+  isHDF=checkIfHDF(namen);
 
   /*max range of Riegl: OTHERS ARE SHORTER or longer. COULD BE ADJUSTABLE*/
-  maxR=300.0;
+  maxR=1450.0;
 
   /*allocate space*/
   if(!(scan=(tlsScan *)calloc(1,sizeof(tlsScan)))){
@@ -777,8 +889,9 @@ tlsScan *readOneTLS(char *namen,voxStruct *vox,char useFracGap,tlsVoxMap *map,in
   }
 
   /*read all data into RAM*/
-  if(isPtx==0)readTLSpolarBinary(namen,0,&tempTLS);
-  else {ISINTRETNULL(readPTXleica(namen,0,&tempTLS));}
+  if(isPtx==1)      { ISINTRETNULL(readPTXleica(namen,0,&tempTLS)); }
+  else if(isHDF==1) { ISINTRETNULL(readTLSpolarHDF(namen,0,&tempTLS)); }
+  else              { ISINTRETNULL(readTLSpolarBinary(namen,0,&tempTLS)); }
 
   /*if we are saving points, allocate a buffer*/
   if(vox->savePts){
@@ -811,8 +924,9 @@ tlsScan *readOneTLS(char *namen,voxStruct *vox,char useFracGap,tlsVoxMap *map,in
     /*loop over beams in scan*/
     for(j=0;j<tempTLS->nBeams;j++){
       /*update where we are in the file if needed*/
-      if(isPtx==0)readTLSpolarBinary(namen,j,&tempTLS);
-      else {ISINTRETNULL(readPTXleica(namen,j,&tempTLS));}
+      if(isPtx==1)      { ISINTRETNULL(readPTXleica(namen,j,&tempTLS)); }
+      else if(isHDF==1) { ISINTRETNULL(readTLSpolarHDF(namen,j,&tempTLS)); }
+      else              { ISINTRETNULL(readTLSpolarBinary(namen,j,&tempTLS)); }
       tInd=j-tempTLS->pOffset;   /*update index to account for buffered memory*/
 
       /*avoid tilt mount if needed*/
@@ -873,8 +987,9 @@ tlsScan *readOneTLS(char *namen,voxStruct *vox,char useFracGap,tlsVoxMap *map,in
       if(vox->hits[fInd][vPlace]>0.0){
         vox->meanRefl[fInd][vPlace]/=vox->hits[fInd][vPlace];
         vox->meanZen[fInd][vPlace]/=vox->hits[fInd][vPlace];
+        vox->meanRange[fInd][vPlace]/=vox->hits[fInd][vPlace];
       }else{
-        vox->meanRefl[fInd][vPlace]=vox->meanZen[fInd][vPlace]=-1.0;
+        vox->meanRefl[fInd][vPlace]=vox->meanZen[fInd][vPlace]=vox->meanRange[fInd][vPlace]=-1.0;
       }/*mean property normalisation*/
     }/*voxel loop*/
   }/*voxel bound check*/
@@ -886,7 +1001,7 @@ tlsScan *readOneTLS(char *namen,voxStruct *vox,char useFracGap,tlsVoxMap *map,in
 
 
 /*##################################################################*/
-/*see if a file is aptx file*/
+/*see if a file is a ptx file*/
 
 char checkIfPtx(char *namen)
 {
@@ -894,6 +1009,18 @@ char checkIfPtx(char *namen)
   if(!strncasecmp(&namen[strlen(namen)-4],".ptx",4))return(1);
   else                                              return(0);
 }/*checkIfPtx*/
+
+
+/*##################################################################*/
+/*see if a file is a HDF5 file*/
+
+char checkIfHDF(char *namen)
+{
+  /*check last three characters*/
+  if(!strncasecmp(&namen[strlen(namen)-3],".h5",3))      return(1);
+  else if(!strncasecmp(&namen[strlen(namen)-4],".hdf",4))return(1);
+  else                                                   return(0);
+}/*checkIfHDF*/
 
 
 /*##################################################################*/

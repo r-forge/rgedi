@@ -9,10 +9,11 @@ windows
 *.obj
 **.vscode
 src/build
-man
 NAMESPACE
 rGEDI.Rcheck
 *.log
 rGEDI*.tar.gz
 Meta
 doc
+inst/gdal
+inst/proj

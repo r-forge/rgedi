@@ -24,7 +24,6 @@
 
 
 
-
 /*####################################################*/
 /*tidy data structure*/
 
@@ -55,7 +54,7 @@ dataStruct *readASCIIdata(char *namen,gediIOstruct *gediIO)
 {
   int i=0,ind=0,*numb=NULL;
   dataStruct *data=NULL;
-  char line[801],temp1[100],temp2[100];
+  char line[1000],temp1[100],temp2[100];
   char temp3[100],temp4[100],temp5[100];
   char temp6[100],temp7[100],temp8[100];
   char temp9[100],temp10[100];
@@ -80,9 +79,10 @@ dataStruct *readASCIIdata(char *namen,gediIOstruct *gediIO)
 
   /*count number of wavebins*/
   data->nBins=0;
-  while(fgets(&(line[0]),800,ipoo)!=NULL){
+  while(fgets(&(line[0]),1000,ipoo)!=NULL){
     if(strncasecmp(line,"#",1))data->nBins++;
   }
+
 
   /*is there usable data?*/
   if(data->nBins==0){
@@ -200,8 +200,6 @@ dataStruct *readASCIIdata(char *namen,gediIOstruct *gediIO)
     }/*line loop*/
     TIDY(numb);
 
-    if(data->res<=0.0)data->res=gediIO->res;
-
     /*add up energy*/
     ASSIGN_CHECKNULL_RETNULL(data->totE,falloc((uint64_t)data->nWaveTypes,"",0));
     for(ind=0;ind<data->nWaveTypes;ind++){
@@ -209,7 +207,8 @@ dataStruct *readASCIIdata(char *namen,gediIOstruct *gediIO)
       for(i=0;i<data->nBins;i++)data->totE[ind]+=data->wave[ind][i];
     }
 
-    gediIO->res=gediIO->den->res=gediIO->gFit->res=fabs(data->z[1]-data->z[0]);
+    gediIO->res=gediIO->den->res=gediIO->gFit->res=fabs(data->z[data->nBins-1]-data->z[0])/(float)(data->nBins-1);
+    if(data->res<=0.0)data->res=gediIO->res;
     if(gediIO->den->res<TOL)data->usable=0;
     if(data->totE[data->useType]<=0.0)data->usable=0;
     if(gediIO->ground==0){   /*set to blank*/
@@ -344,10 +343,11 @@ int trimDataLength(dataStruct **data,gediHDF *hdfData,gediIOstruct *gediIO)
   }
 
   /*if we are doing PCL, do not zero pad and just save the pulse*/
-  if(gediIO->pcl)maxBins=(int)((float)hdfData->nPbins*gediIO->res/hdfData->pRes);
+  if(gediIO->pcl+gediIO->pclPhoton)maxBins=(int)((float)hdfData->nPbins*hdfData->pRes/gediIO->res*4.0);
 
   ASSIGN_CHECKNULL_RETINT(hdfData->nBins,ialloc(1,"bins",0));
   hdfData->nBins[0]=maxBins;
+
   if(maxID>0)hdfData->idLength=maxID;
   else       hdfData->idLength=7;
 
@@ -404,6 +404,837 @@ int trimDataLength(dataStruct **data,gediHDF *hdfData,gediIOstruct *gediIO)
 
 
 /*####################################################*/
+/*write data to HDF5 in L1B format*/
+
+int writeGEDIl1b(gediHDF *hdfData,char *namen,gediIOstruct *gediIO)
+{
+  #ifndef WITHOUT_GDAL
+  int i=0;
+  uint8_t *tempUint8=NULL;
+  uint8_t *padUint8zeros(int);
+  uint8_t *padUint8ones(int);
+  uint16_t *tempUint16=NULL;
+  uint16_t *padUint16zeros(int);
+  uint16_t *setRxSampleCount(int *,int);
+  uint16_t *setSelectStretchL1B(int);
+  uint16_t *setThUsedL1B(int);
+  uint32_t *tempUint32=NULL;
+  uint32_t *padUint32zeros(int);
+  uint64_t *tempUint64=NULL;
+  uint64_t *setRXstarts(int,int *);
+  uint64_t *setShotNumber(int);
+  int8_t *tempInt8=NULL;
+  int8_t *setSurfaceTypeL1B(int,int);
+  int32_t *padInt32ones(int);
+  int64_t *tempInt64=NULL;
+  float *tempFloat=NULL;
+  float *setTXegAmpL1B(int,float);
+  double *tempDouble=NULL;
+  double *setAltitude(int);
+  double *setBounceOffset(int,int *,float);
+  double *setDeltaTime(int);
+  double *setDEMl1b(gediHDF *,int);
+  double *setElevBinL1B(int,float *);
+  double *setCovL1B(gediHDF *,int);
+  double *setL1Bcoords(int,gediHDF *);
+  double *setHalfPiL1B(int);
+  double *setDelayDerivL1B(int);
+  double *setRXenergyL1B(gediHDF *);
+  hid_t file,group_id,sgID;         /* Handles */
+  herr_t status;
+  TXstruct tx;          /*to hold pulse information for TX*/
+  int rearrangePulsetoTX(gediIOstruct *,gediHDF *,TXstruct *);
+
+  /*open new file*/
+  file=H5Fcreate(namen,H5F_ACC_TRUNC,H5P_DEFAULT,H5P_DEFAULT);
+
+  /*create the beam group*/
+  group_id=H5Gcreate2(file,"BEAM0000", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+
+  /*write the data*/
+  ASSIGN_CHECKNULL_RETINT(tempUint16, padUint16zeros(hdfData->nWaves));   /*padded zeroes for fake beams*/
+  ISINTRETINT(writeComp1dUint16HDF5(group_id,"beam",tempUint16,hdfData->nWaves));
+  TIDY(tempUint16);
+  ASSIGN_CHECKNULL_RETINT(tempUint8, padUint8zeros(hdfData->nWaves));   /*padded zeroes for fake beams*/
+  ISINTRETINT(writeComp1dUint8HDF5(group_id,"channel",tempUint8,hdfData->nWaves));
+  TIDY(tempUint8);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setDeltaTime(hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(group_id,"delta_time",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempFloat, falloc(hdfData->nWaves,"tempFloat",0));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"master_frac",tempFloat,hdfData->nWaves));
+  TIDY(tempFloat);
+  ASSIGN_CHECKNULL_RETINT(tempUint32, padUint32zeros(hdfData->nWaves));   /*padded zeroes for fake beams*/
+  ISINTRETINT(writeComp1dUint32HDF5(group_id,"master_int",tempUint32,hdfData->nWaves));
+  TIDY(tempUint32);
+  ASSIGN_CHECKNULL_RETINT(tempFloat, falloc(hdfData->nWaves,"tempFloat",0));    /*needs updating if noise added*/
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"mean",tempFloat,hdfData->nWaves));
+  TIDY(tempFloat);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"noise_mean_corrected",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(group_id,"noise_mean_corrected",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"noise_stddev_corrected",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(group_id,"noise_stddev_corrected",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"nsemean_even",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(group_id,"nsemean_even",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"nsemean_odd",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(group_id,"nsemean_odd",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setRXenergyL1B(hdfData));
+  ISINTRETINT(writeComp1dDoubleHDF5(group_id,"rx_energy",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempUint16, padUint16zeros(hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint16HDF5(group_id,"rx_offset",tempUint16,hdfData->nWaves));
+  TIDY(tempUint16);
+  ASSIGN_CHECKNULL_RETINT(tempUint32, padUint32zeros(hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint32HDF5(group_id,"rx_open",tempUint32,hdfData->nWaves));
+  TIDY(tempUint32);
+  ASSIGN_CHECKNULL_RETINT(tempUint16, setRxSampleCount(hdfData->nBins,hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint16HDF5(group_id,"rx_sample_count",tempUint16,hdfData->nWaves));
+  TIDY(tempUint16);
+  ASSIGN_CHECKNULL_RETINT(tempUint64,setRXstarts(hdfData->nWaves,hdfData->nBins));
+  ISINTRETINT(writeComp1dUint64HDF5(group_id,"rx_sample_start_index",tempUint64,hdfData->nWaves));
+  TIDY(tempUint64);
+  if(gediIO->useCount){
+    ISINTRETINT(writeComp1dFloatHDF5(group_id,"rxwaveform",hdfData->wave[(int)gediIO->useInt],hdfData->nWaves*hdfData->nBins[0]));
+    if(hdfData->ground) { ISINTRETINT(writeComp1dFloatHDF5(group_id,"grxwaveform",hdfData->ground[(int)gediIO->useInt],hdfData->nWaves*hdfData->nBins[0])); }
+  }else{
+    errorf("Issues with HDF5 format and not using the count method\n");
+    return -1;
+  }
+  ASSIGN_CHECKNULL_RETINT(tempUint16,setSelectStretchL1B(hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint16HDF5(group_id,"selection_stretchers_x",tempUint16,hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint16HDF5(group_id,"selection_stretchers_y",tempUint16,hdfData->nWaves));
+  TIDY(tempUint16);
+  ASSIGN_CHECKNULL_RETINT(tempUint64,setShotNumber(hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint64HDF5(group_id,"shot_number",tempUint64,hdfData->nWaves));
+  TIDY(tempUint64);
+  ASSIGN_CHECKNULL_RETINT(tempUint8, padUint8zeros(hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint8HDF5(group_id,"stale_return_flag",tempUint8,hdfData->nWaves));
+  TIDY(tempUint8);
+  ASSIGN_CHECKNULL_RETINT(tempUint16,setThUsedL1B(hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint16HDF5(group_id,"th_left_used",tempUint16,hdfData->nWaves));
+  TIDY(tempUint16);
+  ASSIGN_CHECKNULL_RETINT(tempFloat, falloc(hdfData->nWaves,"tempFloat",0));   /*needs updating if noise added*/
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_egamplitude_error",tempFloat,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_egbias",tempFloat,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_egbias_error",tempFloat,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_eggamma",tempFloat,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_eggamma_error",tempFloat,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_egsigma",tempFloat,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_egsigma_error",tempFloat,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_gloc",tempFloat,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_gloc_error",tempFloat,hdfData->nWaves));
+  TIDY(tempFloat);
+  ASSIGN_CHECKNULL_RETINT(tempUint8, padUint8zeros(hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint8HDF5(group_id,"tx_egflag",tempUint8,hdfData->nWaves));
+  TIDY(tempUint8);
+  ASSIGN_CHECKNULL_RETINT(tempUint8, padUint8ones(hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint8HDF5(group_id,"tx_pulseflag",tempUint8,hdfData->nWaves));
+  TIDY(tempUint8);
+  ASSIGN_CHECKNULL_RETINT(tempFloat, falloc(hdfData->nWaves,"tempFloat",0));   /*needs updating if noise added*/
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"stddev",tempFloat,hdfData->nWaves));
+  TIDY(tempFloat);
+
+  /*rearrange the pulse in to the TX format*/
+  ISINTRETINT(rearrangePulsetoTX(gediIO,hdfData,&tx));
+  ISINTRETINT(writeComp1dUint16HDF5(group_id,"tx_sample_count",tx.txCount,hdfData->nWaves));
+  ISINTRETINT(writeComp1dUint64HDF5(group_id,"tx_sample_start_index",tx.txStart,hdfData->nWaves));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"txwaveform",tx.txwave,hdfData->nWaves*(int)tx.nBins));
+  ASSIGN_CHECKNULL_RETINT(tempFloat, setTXegAmpL1B(hdfData->nWaves,tx.maxAmp));
+  ISINTRETINT(writeComp1dFloatHDF5(group_id,"tx_egamplitude",tempFloat,hdfData->nWaves));
+  TIDY(tempFloat);
+
+
+  /*tidy up*/
+  TIDY(tx.txCount);
+  TIDY(tx.txStart);
+  TIDY(tx.txwave);
+
+  /*add the sub-groups*/
+  /*ancillary subgroup*/
+  sgID=H5Gcreate2(group_id,"ancillary",H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(1,"temp double",0));
+  tempDouble[0]=(double)rand2();
+  ISINTRETINT(write1dDoubleHDF5(sgID,"master_time_epoch",tempDouble,1));
+  TIDY(tempDouble);
+  if(!(tempInt64=(int64_t *)calloc(1,sizeof(int64_t)))){
+    errorf("error in tempInt64 allocation.\n");
+    return -1;
+  } 
+  tempInt64[0]=100;
+  ISINTRETINT(write1dInt64HDF5(sgID,"mean_samples",tempInt64,1));
+  TIDY(tempInt64);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(1,"temp double",0));
+  tempDouble[0]=0.0;
+  ISINTRETINT(write1dDoubleHDF5(sgID,"smoothing_width",tempDouble,1));
+  TIDY(tempDouble);
+  status=H5Gclose(sgID);
+ if(status<0){
+    errorf("Error closing HDF5 group\n");
+    return -1;
+  }
+
+  /*geolocation subgroup*/
+  sgID=H5Gcreate2(group_id,"geolocation",H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setAltitude(hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"altitude_instrument",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"altitude_instrument_error",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"altitude_instrument_error",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setBounceOffset(hdfData->nWaves,NULL,gediIO->res));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"bounce_time_offset_bin0",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"bounce_time_offset_bin0_error",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"bounce_time_offset_bin0_error",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setBounceOffset(hdfData->nWaves,hdfData->nBins,gediIO->res));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"bounce_time_offset_lastbin",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"bounce_time_offset_lastbin_error",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"bounce_time_offset_lastbin_error",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setDeltaTime(hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"delta_time",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setDEMl1b(hdfData,(int)gediIO->useInt));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"digital_elevation_model",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setElevBinL1B(hdfData->nWaves,hdfData->z0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"elevation_bin0",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"elevation_bin0_error",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"elevation_bin0_error",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setElevBinL1B(hdfData->nWaves,hdfData->zN));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"elevation_lastbin",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"elevation_lastbin_error",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"elevation_lastbin_error",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setCovL1B(hdfData,(int)gediIO->useInt));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"landsat_treecover",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"modis_treecover",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  /*reproject bounds to 4326 for GEDI*/
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setL1Bcoords(gediIO->aEPSG,hdfData));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"longitude_bin0",&(tempDouble[0]),hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"longitude_lastbin",&(tempDouble[0]),hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"longitude_instrument",&(tempDouble[0]),hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"latitude_bin0",&(tempDouble[hdfData->nWaves]),hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"latitude_lastbin",&(tempDouble[hdfData->nWaves]),hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"latitude_instrument",&(tempDouble[hdfData->nWaves]),hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"latitude_bin0_error",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"latitude_bin0_error",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"latitude_instrument_error",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"latitude_lastbin_error",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"local_beam_azimuth",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"local_beam_azimuth_error",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"local_beam_elevation_error",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"longitude_bin0_error",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"longitude_instrument_error",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"longitude_lastbin_error",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"mean_sea_surface",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"modis_nonvegetated",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"modis_nonvegetated_sd",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"modis_treecover_sd",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setHalfPiL1B(hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"local_beam_elevation",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setDelayDerivL1B(hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"neutat_delay_derivative_bin0",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"neutat_delay_derivative_lastbin",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"neutat_delay_total_bin0",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"neutat_delay_total_bin0",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"neutat_delay_total_lastbin",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"range_bias_correction",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"solar_azimuth",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"solar_elevation",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempUint64,setShotNumber(hdfData->nWaves));
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"shot_number",0));
+  for(i=0;i<hdfData->nWaves;i++)tempDouble[i]=(double)tempUint64[i];
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"shot_number",tempDouble,hdfData->nWaves));
+  TIDY(tempUint64);
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempInt8,setSurfaceTypeL1B(hdfData->nWaves,5));
+  ISINTRETINT(writeComp2dInt8HDF5(sgID,"surface_type",tempInt8,5,hdfData->nWaves));
+  TIDY(tempInt8);
+  status=H5Gclose(sgID);
+ if(status<0){
+    errorf("Error closing HDF5 group\n");
+    return -1;
+  }
+
+  /*geophys_corr subgroup*/
+  sgID=H5Gcreate2(group_id,"geophys_corr",H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, setDeltaTime(hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"delta_time",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  ASSIGN_CHECKNULL_RETINT(tempDouble, dalloc(hdfData->nWaves,"dynamic_atmosphere_correction",0));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"dynamic_atmosphere_correction",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"geoid",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"tide_earth",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"tide_load",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"tide_ocean",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"tide_ocean_pole",tempDouble,hdfData->nWaves));
+  ISINTRETINT(writeComp1dDoubleHDF5(sgID,"tide_pole",tempDouble,hdfData->nWaves));
+  TIDY(tempDouble);
+  status=H5Gclose(sgID);
+  if(status<0){
+    errorf("Error closing HDF5 group\n");
+    return -1;
+  }
+
+
+  /*close the beam group*/
+  status=H5Gclose(group_id);
+ if(status<0){
+    errorf("Error closing HDF5 group\n");
+    return -1;
+  }
+
+  /*close file*/
+  if(H5Fclose(file)){
+    errorf("Issue closing file\n");
+    return -1;
+  }
+
+  msgf("Waveforms written to %s\n",namen);
+  return 0;
+#else
+  return 0;
+#endif //WITHOUT_GDAL
+}/*writeGEDIl1b*/
+
+
+/*####################################################*/
+/*populate array with  TX max amplitude*/
+
+float *setTXegAmpL1B(int nWaves,float maxAmp)
+{
+  int i=0;
+  float *tempFloat=NULL;
+
+  ASSIGN_CHECKNULL_RETNULL(tempFloat,falloc(nWaves,"setTXegAmpL1B",0));
+  for(i=0;i<nWaves;i++)tempFloat[i]=maxAmp;
+
+  return(tempFloat);
+}/*setTXegAmpL1B*/
+
+
+/*####################################################*/
+/*set th_left_used for L1B files*/
+
+uint16_t *setThUsedL1B(int nWaves)
+{
+  int i=0;
+  uint16_t *tempUint16=NULL;
+
+  if(!(tempUint16=(uint16_t *)calloc(nWaves,sizeof(uint16_t)))){
+    errorf("error in tempUint16 allocation.\n");
+    return NULL;
+  }
+
+  for(i=0;i<nWaves;i++)tempUint16[i]=260;
+
+  return(tempUint16);
+}/*setThUsedL1B*/
+
+
+/*####################################################*/
+/*an array of selection_stretchers_x*/
+
+uint16_t *setSelectStretchL1B(int nWaves)
+{
+  int i=0;
+  uint16_t *tempUint16=NULL;
+
+  if(!(tempUint16=(uint16_t *)calloc(nWaves,sizeof(uint16_t)))){
+    errorf("error in tempUint16 allocation.\n");
+    return NULL;
+  }
+
+  for(i=0;i<nWaves;i++)tempUint16[i]=50;
+
+  return(tempUint16);
+}/*setSelectStretchL1B*/
+
+
+/*####################################################*/
+/*set RX energy*/
+
+double *setRXenergyL1B(gediHDF *hdfData)
+{
+  int i=0,j=0;
+  double *tempDouble=NULL;
+
+  tempDouble=dalloc(hdfData->nWaves,"setRXenergyL1B",0);
+
+  for(i=0;i<hdfData->nWaves;i++){
+    tempDouble[i]=0.0;
+    for(j=0;j<hdfData->nBins[0];j++)tempDouble[i]+=hdfData->wave[0][j];
+  }
+
+  return(tempDouble);
+}/*setRXenergyL1B*/
+
+
+/*####################################################*/
+/*set neutat_delay_derivative*/
+
+double *setDelayDerivL1B(int nWaves)
+{
+  int i=0;
+  double *tempDouble=NULL;
+
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(nWaves,"setDelayDerivL1B",0));
+  for(i=0;i<nWaves;i++)tempDouble[i]=-8.82508928*pow(10.0,-8.0);
+
+  return(tempDouble);
+}/*setDelayDerivL1B*/
+
+
+/*####################################################*/
+/*set a 2D array of surface types for L1B format*/
+
+int8_t *setSurfaceTypeL1B(int nWaves,int nLayers)
+{
+  int i=0,j=0;
+  int8_t *tempInt8=NULL;
+
+  /*allocate space*/
+  if(!(tempInt8=(int8_t *)calloc(nWaves*nLayers,sizeof(int8_t)))){
+    errorf("error in txCount allocation.\n");
+    return NULL;
+  } 
+
+  for(i=0;i<nLayers;i++){
+    if(i>0){
+      for(j=0;j<nWaves;j++)tempInt8[i*nWaves+j]=1;
+    }else{
+      for(j=0;j<nWaves;j++)tempInt8[i*nWaves+j]=0;
+    }
+  }
+
+  return(tempInt8);
+}/*setSurfaceTypeL1B*/
+
+
+/*####################################################*/
+/*make an array of pi/2*/
+
+double *setHalfPiL1B(int numb)
+{
+  int i=0;
+  double *tempDouble=NULL,pi2=0;
+
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(numb,"setHalfPiL1B",0));
+  pi2=M_PI/2.0;
+  for(i=0;i<numb;i++)tempDouble[i]=pi2;
+
+  return(tempDouble);
+}/*setHalfPiL1B*/
+
+
+/*####################################################*/
+/*reproject coordinates for L1B format*/
+double *setL1Bcoords(int aEPSG,gediHDF *hdfData)
+{
+  #ifndef WITHOUT_GDAL
+  int i=0;
+  double *tempDouble=NULL,*z=NULL;
+  double *reprojectWaveBounds(double *inBounds,int inEPSG,int outEPSG);
+  OGRCoordinateTransformationH hTransform;
+  OGRSpatialReferenceH hSourceSRS,hTargetSRS;
+
+  /*allocate space*/
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(2*hdfData->nWaves,"setL1Bcoords",0));  /*x*nWaves,y*nWaves*/
+
+  /*copy relevant data*/
+  for(i=0;i<hdfData->nWaves;i++){
+    tempDouble[i]=hdfData->lon[i];
+    tempDouble[i+hdfData->nWaves]=hdfData->lat[i];
+  }
+
+  /*does it need reprojecting?*/
+  if(aEPSG!=4326){
+    /*make dummy z array*/
+    ASSIGN_CHECKNULL_RETNULL(z,dalloc(hdfData->nWaves,"Z setL1Bcoords",0));
+
+    hSourceSRS=OSRNewSpatialReference(NULL);
+    hTargetSRS=OSRNewSpatialReference(NULL);
+    OSRImportFromEPSG(hTargetSRS,4326);
+    OSRImportFromEPSG(hSourceSRS,aEPSG);
+    hTransform=OCTNewCoordinateTransformation(hSourceSRS,hTargetSRS);
+    OCTTransform(hTransform,hdfData->nWaves,&(tempDouble[0]),&(tempDouble[hdfData->nWaves]),z);
+    OCTDestroyCoordinateTransformation(hTransform);
+    OSRDestroySpatialReference(hSourceSRS);
+    OSRDestroySpatialReference(hTargetSRS);
+    TIDY(z);
+  }
+
+  return(tempDouble);
+  #else
+    return NULL;
+  #endif
+}/*setL1Bcoords*/
+
+/*####################################################*/
+/*set cover for L1B format*/
+
+double *setCovL1B(gediHDF *hdfData,int useInt)
+{
+  int i=0,j=0;
+  float tot=0,totG=0;
+  double *tempDouble=NULL;
+
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(hdfData->nWaves,"setCovL1B",0));
+
+  if(hdfData->ground){
+    /*loop over waves*/
+    for(i=0;i<hdfData->nWaves;i++){
+      tot=totG=0.0;
+      for(j=0;j<hdfData->nBins[0];j++){
+        tot+=hdfData->wave[useInt][j];
+        totG+=hdfData->ground[useInt][j];
+      }
+      if(tot>0.0)tempDouble[i]=(double)((tot-totG)/tot)*100.0;  /*it is in pecent rather than a fraction*/
+      else       tempDouble[i]=0.0;
+    }
+  }else for(i=0;i<hdfData->nWaves;i++)tempDouble[i]=50.0;       /*where no data, set as 50%*/
+
+  return(tempDouble);
+}/*setCovL1B*/
+
+
+/*####################################################*/
+/*set elevation bin for L1B format*/
+
+double *setElevBinL1B(int nWaves,float *z0)
+{
+  int i=0;
+  double *tempDouble=NULL;
+
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(nWaves,"setElevBinL1B",0));
+  for(i=0;i<nWaves;i++)tempDouble[i]=(double)z0[i];
+
+  return(tempDouble);
+}/*setElevBinL1B*/
+
+
+/*####################################################*/
+/*make a DEM for the l1b format*/
+
+double *setDEMl1b(gediHDF *hdfData,int useInt)
+{
+  int i=0,j=0;
+  double *tempDouble=NULL;
+  double z=0,contN=0,res=0;
+
+  /*allocate space*/
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(hdfData->nWaves,"setDEMl1b",0));
+
+  /*do we have ground data?*/
+  if(hdfData->ground){
+    /*loop over waves*/
+    for(i=0;i<hdfData->nWaves;i++){
+      tempDouble[i]=contN=0.0;
+      res=(double)(hdfData->z0[i]-hdfData->zN[i])/(double)hdfData->nBins[0];
+      /*calculate CofG*/
+      for(j=0;j<hdfData->nBins[0];j++){
+        z=(double)hdfData->z0[i]-(double)j*res;
+        tempDouble[i]+=(double)hdfData->ground[useInt][j]*z;
+        contN+=(double)hdfData->ground[useInt][j];
+      }
+      if(contN>0.0)tempDouble[i]/=contN;
+    }
+  }else for(i=0;i<hdfData->nWaves;i++)tempDouble[i]=0.0;
+
+  return(tempDouble);
+}/*setDEMl1b*/
+
+
+/*####################################################*/
+/*set delta time*/
+
+double *setDeltaTime(int nWaves)
+{
+  int i=0;
+  double *tempDouble=NULL;
+
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(nWaves,"setDeltaTime",0));
+
+  for(i=0;i<nWaves;i++)tempDouble[i]=40179291.0+(double)i/484.0;  /*a dummy time for now, but with the right spacing*/
+
+  return(tempDouble);
+}/*setDeltaTime*/
+
+
+/*####################################################*/
+/*set bounds offset for bins*/
+
+double *setBounceOffset(int nWaves,int *nBins,float res)
+{
+  int i=0;
+  double *tempDouble=NULL;
+  double c=0;
+
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(nWaves,"setBounceOffset",0));
+
+  /*is this dfor bin 0 or bin 1*/
+  if(nBins){
+    c=299792458.0;
+    for(i=0;i<nWaves;i++)tempDouble[i]=0.0013691+(double)nBins[0]*(double)res/c;
+  }else{
+    for(i=0;i<nWaves;i++)tempDouble[i]=0.0013691;
+  }
+
+  return(tempDouble);
+}/*setBounceOffset*/
+
+
+/*####################################################*/
+/*set instrument altitude*/
+
+double *setAltitude(int nWaves)
+{
+  int i=0;
+  double *tempDouble=NULL;
+
+  ASSIGN_CHECKNULL_RETNULL(tempDouble,dalloc(nWaves,"setAltitude",0));
+  for(i=0;i<nWaves;i++)tempDouble[i]=410560.0;
+
+  return(tempDouble);
+}/*setAltitude*/
+
+
+/*####################################################*/
+/*Rearrange pulse information in to TX structure*/
+
+int rearrangePulsetoTX(gediIOstruct *gediIO,gediHDF *hdfData,TXstruct *tx)
+{
+  int i=0,j=0;
+  int *contN=NULL;
+  int buff=0;
+  float *txwave=NULL;
+
+  /*resample the resolution*/
+  buff=50;   /*pad before and after the TX wave incase the L2A code needs some workspace*/
+  tx->nBins=(uint16_t)((float)gediIO->pulse->nBins*gediIO->pRes/gediIO->res)+(uint16_t)(2*buff);
+
+  /*allocate space*/
+  if(!(tx->txCount=(uint16_t *)calloc(hdfData->nWaves,sizeof(uint16_t)))){
+    errorf("error in txCount allocation.\n");
+    return -1;
+  }
+  if(!(tx->txStart=(uint64_t *)calloc(hdfData->nWaves,sizeof(uint64_t)))){
+    errorf("error in txStart allocation.\n");
+    return -1;
+  }
+
+
+  /*make a resampled pulse*/
+  ASSIGN_CHECKNULL_RETINT(tx->txwave,falloc((int)tx->nBins*hdfData->nWaves,"txwave",0));
+  ASSIGN_CHECKNULL_RETINT(txwave,falloc((int)tx->nBins,"temp txwave",0));
+  ASSIGN_CHECKNULL_RETINT(contN,ialloc((int)tx->nBins,"txwave counter",0));
+
+  /*zero counters*/
+  for(i=0;i<(int)tx->nBins;i++){
+    txwave[i]=0.0;
+    contN[i]=0;
+  }
+
+  /*count up*/
+  for(i=0;i<gediIO->pulse->nBins;i++){
+    j=(int)(gediIO->pulse->x[i]/gediIO->res)+buff;
+    if((j>=0)&&(j<(int)tx->nBins)){
+      txwave[j]+=gediIO->pulse->y[i];
+      contN[j]++;
+    }
+  }
+
+  /*normalise*/
+  tx->maxAmp=0.0;
+  for(i=0;i<(int)tx->nBins;i++){
+    if(contN[i]>0){
+      txwave[i]/=(float)contN[i];
+      if(txwave[i]>tx->maxAmp)tx->maxAmp=txwave[i];
+    }
+  }
+
+  /*populate arrays*/
+  for(i=0;i<hdfData->nWaves;i++){
+    tx->txCount[i]=tx->nBins;
+    tx->txStart[i]=(uint64_t)i*(uint64_t)tx->nBins;
+    memcpy(&(tx->txwave[i*(int)tx->nBins]),&(txwave[0]),sizeof(float)*tx->nBins);
+  }
+  TIDY(txwave);
+
+  return 0;
+}/*rearrangePulsetoTX*/
+
+
+/*####################################################*/
+/*make an array of int32 of 1*/
+
+int32_t *padInt32ones(int numb)
+{
+  int i=0;
+  int32_t *jimlad=NULL;
+
+  if(!(jimlad=(int32_t *)calloc(numb,sizeof(int32_t)))){
+    errorf("error in padInt32ones allocation.\n");
+    return NULL;
+  }
+
+  for(i=0;i<numb;i++)jimlad[i]=1;
+
+  return(jimlad);
+}/*padInt32ones*/
+
+
+/*####################################################*/
+/*set a shot number*/
+
+uint64_t *setShotNumber(int nWaves)
+{
+  int i=0;
+  uint64_t *tempUint64=NULL;
+
+  if(!(tempUint64=(uint64_t *)calloc(nWaves,sizeof(uint64_t)))){
+    errorf("error in tempUint64 allocation.\n");
+    return NULL;
+  }
+
+  for(i=0;i<nWaves;i++)tempUint64[i]=(uint64_t)i;
+
+  return(tempUint64);
+}/*setShotNumber*/
+
+
+/*####################################################*/
+/*make array to map RX wave starts*/
+
+uint64_t *setRXstarts(int nWaves,int *nBins)
+{
+  int i=0;
+  uint64_t *tempUint64=NULL;
+
+  if(!(tempUint64=(uint64_t *)calloc(nWaves,sizeof(uint64_t)))){
+    errorf("error in tempUint64 allocation.\n");
+    return NULL;
+  }
+
+  for(i=0;i<nWaves;i++)tempUint64[i]=(uint64_t)i*(uint64_t)nBins[0];
+
+  return(tempUint64);
+}/*setRXstarts*/
+
+
+/*####################################################*/
+/*get Rx Sample Count in to L1B format*/
+
+uint16_t *setRxSampleCount(int *nBins,int nWaves)
+{
+  int i=0;
+  uint16_t *tempUint16=NULL;
+
+  if(!(tempUint16=(uint16_t *)calloc(nWaves,sizeof(uint16_t)))){
+    errorf("error in tempUint16 allocation.\n");
+    return NULL;
+  }
+
+  for(i=0;i<nWaves;i++)tempUint16[i]=(uint16_t)nBins[0];
+
+  return(tempUint16);
+}/*setRxSampleCount*/
+
+
+/*####################################################*/
+/*make an array of 0s in uint8 for HDF5*/
+
+uint8_t *padUint8zeros(int numb)
+{
+  int i=0;
+  uint8_t *tempUint8=NULL;
+
+  if(!(tempUint8=(uint8_t *)calloc(numb,sizeof(uint8_t)))){
+    errorf("error in tempUint8 allocation.\n");
+    return NULL;
+  } 
+
+  for(i=0;i<numb;i++)tempUint8[i]=0;
+
+  return(tempUint8);
+}/*padUint8zeros*/
+
+
+/*####################################################*/
+/*make an array of 1s in uint8 for HDF5*/
+
+uint8_t *padUint8ones(int numb)
+{
+  int i=0;
+  uint8_t *tempUint8=NULL;
+
+  if(!(tempUint8=(uint8_t *)calloc(numb,sizeof(uint8_t)))){
+    errorf("error in tempUint8 allocation.\n");
+    return NULL;
+  }
+
+  for(i=0;i<numb;i++)tempUint8[i]=1;
+
+  return(tempUint8);
+}/*padUint8ones*/
+
+
+/*####################################################*/
+/*make an array of 0s in uint16 for HDF5*/
+
+uint16_t *padUint16zeros(int numb)
+{
+  int i=0;
+  uint16_t *tempUint16=NULL;
+
+  if(!(tempUint16=(uint16_t *)calloc(numb,sizeof(uint16_t)))){
+    errorf("error in tempUint16 allocation.\n");
+    return NULL;
+  }
+
+  for(i=0;i<numb;i++)tempUint16[i]=0;
+
+
+  return(tempUint16);
+}/*padUint16zeros*/
+
+
+/*####################################################*/
+/*make an array of 0s in uint32 for HDF5*/
+
+uint32_t *padUint32zeros(int numb)
+{
+  int i=0;
+  uint32_t *tempUint32=NULL;
+
+  if(!(tempUint32=(uint32_t *)calloc(numb,sizeof(uint32_t)))){
+    errorf("error in tempUint32 allocation.\n");
+    return NULL;
+  } 
+
+  for(i=0;i<numb;i++)tempUint32[i]=0;
+
+  return(tempUint32);
+}/*padUint32zeros*/
+
+
+/*####################################################*/
 /*write data to HDF5*/
 
 int writeGEDIhdf(gediHDF *hdfData,char *namen,gediIOstruct *gediIO)
@@ -413,11 +1244,13 @@ int writeGEDIhdf(gediHDF *hdfData,char *namen,gediIOstruct *gediIO)
   /*open new file*/
   file=H5Fcreate(namen,H5F_ACC_TRUNC,H5P_DEFAULT,H5P_DEFAULT);
 
+
+
  /*write header*/
-  write1dIntHDF5(file,"NWAVES",&hdfData->nWaves,1);
-  write1dIntHDF5(file,"NBINS",&hdfData->nBins[0],1);
-  write1dIntHDF5(file,"NTYPEWAVES",&hdfData->nTypeWaves,1);
-  write1dIntHDF5(file,"IDLENGTH",&hdfData->idLength,1);
+  ISINTRETINT(write1dIntHDF5(file,"NWAVES",&hdfData->nWaves,1));
+  ISINTRETINT(write1dIntHDF5(file,"NBINS",&hdfData->nBins[0],1));
+  ISINTRETINT(write1dIntHDF5(file,"NTYPEWAVES",&hdfData->nTypeWaves,1));
+  ISINTRETINT(write1dIntHDF5(file,"IDLENGTH",&hdfData->idLength,1));
   ISINTRETINT(write1dFloatHDF5(file,"FSIGMA",&hdfData->fSigma,1));
   ISINTRETINT(write1dFloatHDF5(file,"PSIGMA",&hdfData->pSigma,1));
   ISINTRETINT(write1dIntHDF5(file,"NPBINS",&hdfData->nPbins,1));
@@ -770,16 +1603,21 @@ int readGEDIwaveform(hid_t group,int *nSamps,uint64_t *sInds,int nUse,gediHDF *h
   uint16_t *tempI=NULL;
   float *tempF=NULL;
   hid_t dset,dtype;
+  herr_t status;
   int unwrapRealGEDI(uint16_t *,float *,uint64_t *,int,int,gediHDF *,int *);
 
   /*read data dtype*/
   dset=H5Dopen2(group,"rxwaveform",H5P_DEFAULT);
   dtype=H5Dget_type(dset);
-  H5Dclose(dset);
+  status=H5Dclose(dset);
+ if(status<0){
+    errorf("Error closing HDF5 group\n");
+    return -1;
+  }
 
   /*checkdata type and read in to appropriate array*/
   if(H5Tequal(dtype,H5T_NATIVE_USHORT)||H5Tequal(dtype,H5T_NATIVE_UINT16)){   /*l1a file*/
-    tempI=read1dUint16HDF5(group,"rxwaveform",nSamps);
+    ASSIGN_CHECKNULL_RETINT(tempI,read1dUint16HDF5(group,"rxwaveform",nSamps));
     *l1b=0;
   }else if(H5Tequal(dtype,H5T_NATIVE_FLOAT)||H5Tequal(dtype,H5T_STD_I32BE)||H5Tequal(dtype,H5T_STD_I32LE)||\
             H5Tequal(dtype,H5T_IEEE_F32BE)||H5Tequal(dtype,H5T_IEEE_F32LE)||H5Tequal(dtype,H5T_INTEL_I32)||H5Tequal(dtype,H5T_INTEL_B32)){   /*l1b file*/
@@ -789,7 +1627,11 @@ int readGEDIwaveform(hid_t group,int *nSamps,uint64_t *sInds,int nUse,gediHDF *h
     errorf("rxwaveform data type not recognised\n");
     return(-1);
   }
-  H5Tclose(dtype);
+  status=H5Tclose(dtype);
+ if(status<0){
+    errorf("Error closing HDF5 group\n");
+    return -1;
+  }
 
   /*unpack and pad all waves to have the same number of bins*/
   ISINTRETINT(unwrapRealGEDI(tempI,tempF,sInds,*nSamps,nUse,hdfData,useInd));
@@ -838,14 +1680,24 @@ int *usableGEDIfootprints(double *tempLon,double *tempLat,int numb,int *nUse,ged
     bounds[2]=bounds[3]=100000000.0;
   }
 
+  /*if bounds are in degrees, do we need to unwrap?*/
+  if(gediIO->wEPSG==4326){
+    if(bounds[0]<0.0)bounds[0]+=360.0;
+    if(bounds[2]<0.0)bounds[2]+=360.0;
+  }
+
   /*loop over all footprints*/
   for(i=0;i<numb;i++){
+    /*may need to unwrap longitudes here too*/
+    if(gediIO->wEPSG==4326)if(tempLon[i]<0.0)tempLon[i]+=360.0;
+
     if((tempLon[i]>=bounds[0])&&(tempLon[i]<=bounds[2])&&\
        (tempLat[i]>=bounds[1])&&(tempLat[i]<=bounds[3])){
       ASSIGN_CHECKNULL_RETNULL(useInd,markInt(*nUse,useInd,i));
       (*nUse)++;
     }
   }
+
 
   TIDY(bounds);
   return(useInd);
@@ -862,6 +1714,9 @@ double *reprojectWaveBounds(double *inBounds,int inEPSG,int outEPSG)
   OGRCoordinateTransformationH hTransform;
   OGRSpatialReferenceH hSourceSRS,hTargetSRS;
   double *bounds=NULL;
+  int verMaj=0;
+  int findGDAlVerMaj();
+
 
   /*allocate space*/
   ASSIGN_CHECKNULL_RETNULL(bounds,dalloc(4,"wave bounds",0));
@@ -873,8 +1728,8 @@ double *reprojectWaveBounds(double *inBounds,int inEPSG,int outEPSG)
     ASSIGN_CHECKNULL_RETNULL(z,dalloc(2,"z trans",9));
 
     x[0]=inBounds[0];
-    x[1]=inBounds[2];
     y[0]=inBounds[1];
+    x[1]=inBounds[2];
     y[1]=inBounds[3];
     z[0]=z[1]=0.0;
 
@@ -888,10 +1743,21 @@ double *reprojectWaveBounds(double *inBounds,int inEPSG,int outEPSG)
     OSRDestroySpatialReference(hSourceSRS);
     OSRDestroySpatialReference(hTargetSRS);
 
-    bounds[0]=x[0];
-    bounds[1]=y[0];
-    bounds[2]=x[1];
-    bounds[3]=y[1];
+    /*GDAL 3.0 and later now returns lat lon rather than lon lat. Find majer version*/
+    /*this will need updating once we hit version 10*/
+    verMaj=findGDAlVerMaj();
+
+    if(verMaj>=3){  /*if GDAL >=v3, need to swap lat and lon*/
+      bounds[0]=y[0];
+      bounds[1]=x[0];
+      bounds[2]=y[1];
+      bounds[3]=x[1];
+    }else{
+      bounds[0]=x[0];
+      bounds[1]=y[0];
+      bounds[2]=x[1];
+      bounds[3]=y[1];
+    }
   }else{  /*copy bounds*/
     bounds[0]=inBounds[0];
     bounds[1]=inBounds[1];
@@ -904,9 +1770,34 @@ double *reprojectWaveBounds(double *inBounds,int inEPSG,int outEPSG)
   TIDY(z);
   return(bounds);
 #else
-  return(inBounds);
+  double* bounds = NULL;
+  ASSIGN_CHECKNULL_RETNULL(bounds, dalloc(4, "wave bounds", 0));
+  bounds[0] = inBounds[0];
+  bounds[1] = inBounds[1];
+  bounds[2] = inBounds[2];
+  bounds[3] = inBounds[3];
+  return(bounds);
 #endif
 }/*reprojectWaveBounds*/
+
+
+/*####################################################*/
+/*find GDAL version major*/
+
+int findGDAlVerMaj()
+{
+  int verMaj=0;
+  #ifndef WITHOUT_GDAL
+  float val=0;
+  char vers[20];   /*GDAL version number string*/
+
+  strcpy(&(vers[0]),GDALVersionInfo("VERSION_NUM"));
+  val=atof(vers);
+  verMaj=(int)(val/pow(10,(int)(log(val)/log(10.0))));
+
+  #endif
+  return(verMaj);
+}/*findGDAlVerMaj*/
 
 
 /*####################################################*/
@@ -1201,7 +2092,7 @@ gediHDF *tidyGediHDF(gediHDF *hdfData)
     TTIDY((void **)hdfData->wave,hdfData->nTypeWaves);
     TTIDY((void **)hdfData->ground,hdfData->nTypeWaves);
     TIDY(hdfData->waveID);
-    TIDY(hdfData->pulse);
+    hdfData->pulse=NULL;     /*as this is repeated in gediIO*/
     TIDY(hdfData->z0);       /*wave top elevations*/
     TIDY(hdfData->zN);       /*wave bottom elevations*/
     TIDY(hdfData->lon);     /*longitudes*/
@@ -1228,9 +2119,13 @@ gediHDF *tidyGediHDF(gediHDF *hdfData)
 dataStruct *unpackHDFgedi(char *namen,gediIOstruct *gediIO,gediHDF **hdfGedi,int numb)
 {
   int i=0;
+  int sBin=0,eBin=0;
   float zTop=0;
-  float *setPulseRange(float,pulseStruct *);
+  float *setPulseRange(gediIOstruct *);
+  double sOff=0,eOff=0;
   dataStruct *data=NULL;
+  void findPCLends(int *,int *,float *,int);
+
 
   /*read data from file if needed*/
   if(*hdfGedi==NULL){
@@ -1247,7 +2142,9 @@ dataStruct *unpackHDFgedi(char *namen,gediIOstruct *gediIO,gediHDF **hdfGedi,int
   /*copy header*/
   if(hdfGedi[0]->varBins==0)data->nBins=hdfGedi[0]->nBins[0];
   else                      data->nBins=hdfGedi[0]->nBins[numb];
+  data->res=fabs(hdfGedi[0]->z0[numb]-hdfGedi[0]->zN[numb])/(float)data->nBins;
   data->nWaveTypes=hdfGedi[0]->nTypeWaves;
+  if(data->nWaveTypes<=0)data->nWaveTypes=1;
   data->useType=0;
   data->demGround=0;
   data->pSigma=hdfGedi[0]->pSigma;
@@ -1268,18 +2165,33 @@ dataStruct *unpackHDFgedi(char *namen,gediIOstruct *gediIO,gediHDF **hdfGedi,int
   }
   data->usable=1;
 
+  /*find start and end of waveform if using PCL*/
+  if(gediIO->pcl||gediIO->pclPhoton){
+    findPCLends(&sBin,&eBin,&hdfGedi[0]->wave[data->useType][hdfGedi[0]->sInd[numb]],data->nBins);
+    /*elevation offsets*/
+    sOff=(double)sBin*(double)data->res;
+    eOff=(double)(data->nBins-eBin)*(double)data->res;
+    /*trim bins*/
+    data->nBins=eBin-sBin;
+  }else{
+    sBin=0;
+    eBin=data->nBins;
+    sOff=eOff=0.0;
+  }
+
   /*point to arrays rather than copy*/
   ASSIGN_CHECKNULL_RETNULL(data->wave,fFalloc(data->nWaveTypes,"waveform",0));
   ASSIGN_CHECKNULL_RETNULL(data->wave[0],falloc((uint64_t)data->nBins,"waveform",0));
-  memcpy(data->wave[0],&(hdfGedi[0]->wave[data->useType][hdfGedi[0]->sInd[numb]]),data->nBins*4);
+  memcpy(data->wave[0],&(hdfGedi[0]->wave[data->useType][hdfGedi[0]->sInd[numb]+sBin]),data->nBins*4);
+
   if(gediIO->ground){
     ASSIGN_CHECKNULL_RETNULL(data->ground,fFalloc(data->nWaveTypes,"ground waveform",0));
     ASSIGN_CHECKNULL_RETNULL(data->ground[0],falloc((uint64_t)data->nBins,"waveform",0));
-    memcpy(data->ground[0],&(hdfGedi[0]->ground[data->useType][hdfGedi[0]->sInd[numb]]),data->nBins*4);
+    memcpy(data->ground[0],&(hdfGedi[0]->ground[data->useType][hdfGedi[0]->sInd[numb]+sBin]),data->nBins*4);
   }else data->ground=NULL;
 
   /*read pulse*/
-  if(hdfGedi[0]->nPbins>0){
+  if((hdfGedi[0]->nPbins>0)&&(gediIO->pulse==NULL)){
     if(!(gediIO->pulse=(pulseStruct *)calloc(1,sizeof(pulseStruct)))){
       errorf("error pulse allocation.\n");
       return(NULL);
@@ -1287,8 +2199,8 @@ dataStruct *unpackHDFgedi(char *namen,gediIOstruct *gediIO,gediHDF **hdfGedi,int
     gediIO->pulse->y=hdfGedi[0]->pulse;
     gediIO->pulse->nBins=hdfGedi[0]->nPbins;
     gediIO->pRes=hdfGedi[0]->pRes;
-    ASSIGN_CHECKNULL_RETNULL(gediIO->pulse->x,setPulseRange(gediIO->pRes,gediIO->pulse));
-  }else{
+    ASSIGN_CHECKNULL_RETNULL(gediIO->pulse->x,setPulseRange(gediIO));
+  }else if(hdfGedi[0]->nPbins==0){
     gediIO->pulse=NULL;
   }/*pulse reading*/
 
@@ -1298,12 +2210,14 @@ dataStruct *unpackHDFgedi(char *namen,gediIOstruct *gediIO,gediHDF **hdfGedi,int
   for(i=0;i<data->nBins;i++)data->totE[data->useType]+=data->wave[0][i];
 
   /*elevation needs making and resolution passing to structures*/
-  data->res=fabs(hdfGedi[0]->z0[numb]-hdfGedi[0]->zN[numb])/(float)data->nBins;
   gediIO->res=data->res;
   if(gediIO->gFit)gediIO->gFit->res=data->res;
   if(gediIO->den)gediIO->den->res=data->res;
   ASSIGN_CHECKNULL_RETNULL(data->z,dalloc(data->nBins,"z",0));
-  zTop=(hdfGedi[0]->zN[numb]>hdfGedi[0]->z0[numb])?hdfGedi[0]->zN[numb]:hdfGedi[0]->z0[numb];
+  /*which way up are we?*/
+  if(hdfGedi[0]->z0[numb]>hdfGedi[0]->zN[numb])zTop=hdfGedi[0]->z0[numb]-sOff;
+  else                                         zTop=hdfGedi[0]->zN[numb]-eOff;
+
   for(i=0;i<data->nBins;i++)data->z[i]=(double)(zTop-(float)i*data->res);
 
   /*set up number of messages*/
@@ -1315,31 +2229,71 @@ dataStruct *unpackHDFgedi(char *namen,gediIOstruct *gediIO,gediHDF **hdfGedi,int
 
 
 /*####################################################*/
+/*find ends of signal for PCL*/
+
+void findPCLends(int *sBin,int *eBin,float *wave,int nBins)
+{
+  int i=0;
+  float max=0,thresh=0;
+
+  /*find maximum absolute value*/
+  max=-1000.0;
+  for(i=0;i<nBins;i++){
+    if(fabs(wave[i])>max)max=fabs(wave[i]);
+  }
+  thresh=max*0.000001;
+
+  /*find the start*/
+  *sBin=0;
+  for(i=0;i<nBins;i++){
+    if(fabs(wave[i])>thresh){
+      *sBin=i-1;
+      break;
+    }
+  }
+  if(*sBin<0)*sBin=0;
+
+  /*find the end*/
+  *eBin=nBins;
+  for(i=nBins-1;i>=0;i--){
+    if(fabs(wave[i])>thresh){
+      *eBin=i+1;
+      break;
+    } 
+  }
+  if(*eBin>nBins)*eBin=nBins;
+
+  return;
+}/*findPCLends*/
+
+
+/*####################################################*/
 /*set range from pulse file*/
 
-float *setPulseRange(float pRes,pulseStruct *pulse)
+float *setPulseRange(gediIOstruct *gediIO)
 {
-  int i=0,nMax=0;
+  int i=0;
   float *x=NULL;
   float max=0;
 
   /*allocate space*/
-  ASSIGN_CHECKNULL_RETNULL(x,falloc(pulse->nBins,"pulse range",0));
+  ASSIGN_CHECKNULL_RETNULL(x,falloc(gediIO->pulse->nBins,"pulse range",0));
 
   /*assign values and check for max*/
   max=-10000.0;
-  nMax=0;
-  for(i=0;i<pulse->nBins;i++){
-    x[i]=(float)i*pRes;
-    if(pulse->y[i]>max){
-      max=pulse->y[i];
-      pulse->centBin=i;
-      nMax++;
+  for(i=0;i<gediIO->pulse->nBins;i++){
+    x[i]=(float)i*gediIO->pRes;
+
+    if((gediIO->pcl==0)&&(gediIO->pclPhoton==0)){
+      if(gediIO->pulse->y[i]>max){
+        max=gediIO->pulse->y[i];
+        gediIO->pulse->centBin=i;
+      }
     }
   }
 
   /*to allow for chirps*/
-  if(nMax>2)pulse->centBin=pulse->nBins/2;
+  if(gediIO->pcl||gediIO->pclPhoton)gediIO->pulse->centBin=(int)(gediIO->pulse->nBins/2);
 
   return(x);
 }/*setPulseRange*/
@@ -2214,7 +3168,6 @@ int setGediPulse(gediIOstruct *gediIO,gediRatStruct *gediRat)
   float max=0,tot=0;
   int readSimPulse(gediIOstruct *);
 
-
   if(!(gediIO->pulse=(pulseStruct *)calloc(1,sizeof(pulseStruct)))){
     errorf("error pulseStruct allocation.\n");
     return(-1);
@@ -2282,7 +3235,7 @@ int setGediPulse(gediIOstruct *gediIO,gediRatStruct *gediRat)
 
 int readSimPulse(gediIOstruct *gediIO)
 {
-  int i=0,nMax=0;
+  int i=0;
   float CofG=0,tot=0,centre=0;
   float minSep=0,max=0;
   char line[400];
@@ -2293,7 +3246,6 @@ int readSimPulse(gediIOstruct *gediIO)
     errorf("Error opening input file %s\n",gediIO->pulseFile);
     return(-1);
   }
-
 
   /*count number of bins*/
   gediIO->pulse->nBins=0;
@@ -2325,21 +3277,22 @@ int readSimPulse(gediIOstruct *gediIO)
   tot=0.0;
   CofG=0.0;
   max=-1000.0;
-  nMax=0;
   for(i=0;i<gediIO->pulse->nBins;i++){
     CofG+=gediIO->pulse->x[i]*gediIO->pulse->y[i];
     if(gediIO->pulse->y[i]>=max){
       max=gediIO->pulse->y[i];
       centre=gediIO->pulse->x[i];
-      nMax++;
     }
     tot+=gediIO->pulse->y[i];
   }
-  CofG/=tot;
+
+  if(tot>0.0)CofG/=tot;
   CofG-=centre;
 
+  if((gediIO->pcl==1)||(gediIO->pclPhoton))centre=gediIO->pulse->x[(int)(gediIO->pulse->nBins/2)];
+
   /*align pulse*/
-  if(nMax<=2){
+  if((gediIO->pcl==0)&&(gediIO->pclPhoton==0)){
     minSep=1000.0;
     gediIO->pSigma=0.0;
     for(i=0;i<gediIO->pulse->nBins;i++){
@@ -2350,7 +3303,7 @@ int readSimPulse(gediIOstruct *gediIO)
         gediIO->pulse->centBin=i;
       }
     }
-  }else gediIO->pulse->centBin=gediIO->pulse->nBins/2;  /*if we are using pulse compressed lidar*/
+  }else gediIO->pulse->centBin=(int)(gediIO->pulse->nBins/2);  /*if we are using pulse compressed lidar*/
 
   /*pulse width*/
   gediIO->pSigma=0.0;
@@ -2361,6 +3314,8 @@ int readSimPulse(gediIOstruct *gediIO)
   gediIO->linkPsig=gediIO->pSigma;
 
   /*now normalise*/
+  //tot=tot-min*(float)gediIO->pulse->nBins;
+  //for(i=0;i<gediIO->pulse->nBins;i++)gediIO->pulse->y[i]=(gediIO->pulse->y[i]-min)/tot;
   for(i=0;i<gediIO->pulse->nBins;i++)gediIO->pulse->y[i]/=tot;
 
   if(ipoo){
@@ -2388,7 +3343,7 @@ int setGediFootprint(gediRatStruct *gediRat,gediIOstruct *gediIO)
 
   /*number of lobes and allocate*/
   if(gediRat->sideLobe==0)gediRat->nLobes=1;
-  else                   gediRat->nLobes=7;
+  else                    gediRat->nLobes=7;
   if(!(gediRat->lobe=(lobeStruct *)calloc(gediRat->nLobes,sizeof(lobeStruct)))){
     errorf("error lobeStruct allocation.\n");
     return(-1);
@@ -2540,39 +3495,62 @@ int packGEDIhdf(waveStruct *waves,gediHDF *hdfData,int waveNumb,gediIOstruct *ge
 
   numb=*hdfCount;
 
-  /*trim waveform*/
-  if(gediIO->pcl==0)buff=30.0;
-  else              buff=0.0;
-  //if(gediIO->pulse)buff+=(double)gediIO->pulse->nBins*(double)gediIO->pRes;
 
-  /*find energies*/
-  ASSIGN_CHECKNULL_RETINT(tot,falloc((uint64_t)hdfData->nTypeWaves,"tot",0));
-  ASSIGN_CHECKNULL_RETINT(cumul,falloc((uint64_t)hdfData->nTypeWaves,"cumul",0));
-  for(j=0;j<hdfData->nTypeWaves;j++){
-    tot[j]=cumul[j]=0.0;
-    for(i=0;i<waves->nBins;i++)tot[j]+=waves->wave[j][i];
-  }
-  /*set threshols*/
-  ASSIGN_CHECKNULL_RETINT(thresh,falloc((uint64_t)hdfData->nTypeWaves,"thresh",0));
-  for(j=0;j<hdfData->nTypeWaves;j++)thresh[j]=0.01*tot[j];
-  TIDY(tot);
-  /*find waveform start*/
-  start=-1;
-  for(i=0;i<waves->nBins;i++){
+  /*trim waveform*/
+  if(gediIO->pcl==0){
+    buff=30.0;
+    /*find energies*/
+    ASSIGN_CHECKNULL_RETINT(tot,falloc((uint64_t)hdfData->nTypeWaves,"tot",0));
+    ASSIGN_CHECKNULL_RETINT(cumul,falloc((uint64_t)hdfData->nTypeWaves,"cumul",0));
     for(j=0;j<hdfData->nTypeWaves;j++){
-      cumul[j]+=waves->wave[j][i];
-      if(cumul[j]>thresh[j]){
-        start=i;
+      tot[j]=cumul[j]=0.0;
+      for(i=0;i<waves->nBins;i++)tot[j]+=waves->wave[j][i];
+    }
+
+    /*set threshold*/
+    thresh=falloc((uint64_t)hdfData->nTypeWaves,"thresh",0);
+    for(j=0;j<hdfData->nTypeWaves;j++)thresh[j]=0.01*tot[j];
+    TIDY(tot);
+
+    /*find waveform start*/
+    start=-1;
+    for(i=0;i<waves->nBins;i++){
+      for(j=0;j<hdfData->nTypeWaves;j++){
+        cumul[j]+=waves->wave[j][i];
+        if(cumul[j]>thresh[j]){
+          start=i;
+          break;
+        }
+      }
+      if(start>=0)break;
+    }/*waveform trimming*/
+    TIDY(cumul);
+    TIDY(thresh);
+
+    start-=buff/gediIO->res;
+    if(start<0)start=0;
+  }else{
+    /*find maximum*/
+    tot=falloc(1,"tot",0);
+    tot[0]=-10000.0;
+    for(i=0;i<waves->nBins;i++){
+      if(fabs(waves->wave[0][i])>tot[0])tot[0]=fabs(waves->wave[0][i]);
+    }
+    start=0;
+    thresh=falloc(1,"thresh",0);
+    thresh[0]=tot[0]*0.000001;
+    TIDY(tot);
+    for(i=0;i<waves->nBins;i++){
+      if(fabs(waves->wave[0][i])>thresh[0]){
+        start=i-1;
         break;
       }
     }
-    if(start>=0)break;
-  }/*waveform trimming*/
-  TIDY(cumul);
-  TIDY(thresh);
-
-  start-=buff/gediIO->res;
-  if(start<0)start=0;
+    if(start<0)start=0;
+    buff=0.0;
+    TIDY(thresh);
+    /*msgf(stdout,"Start %d\n",start);*/
+  }
 
   /*copy data*/
   hdfData->z0[numb]=waves->maxZ-(float)start*gediIO->res;
@@ -2618,6 +3596,7 @@ int packGEDIhdf(waveStruct *waves,gediHDF *hdfData,int waveNumb,gediIOstruct *ge
   return(0);
 }/*packGEDIhdf*/
 
+
 /*##############################################*/
 /*set up HDF structure and write header*/
 
@@ -2637,8 +3616,9 @@ gediHDF *setUpHDF(gediIOstruct *gediIO,gediRatStruct *gediRat,char useID,char *w
 
   /*header*/
   hdfData->nWaves=gediRat->gNx*gediRat->gNy;
-  ASSIGN_CHECKNULL_RETNULL(hdfData->nBins,ialloc(1,"nBins",0));
-  hdfData->nBins[0]=(int)((float)maxBins*0.15/gediIO->res);
+  ASSIGN_CHECKNULL_RETNULL(hdfData->nBins, ialloc(1,"nBins",0));
+  if(gediIO->pcl==0)hdfData->nBins[0]=(int)((float)maxBins*0.15/gediIO->res);
+  else              hdfData->nBins[0]=(int)((gediIO->pulse->x[gediIO->pulse->nBins-1]-gediIO->pulse->x[0])/gediIO->res)*2;
   hdfData->nTypeWaves=gediIO->nTypeWaves;
   hdfData->pSigma=gediIO->pSigma;
   hdfData->fSigma=gediIO->fSigma;
@@ -2655,6 +3635,7 @@ gediHDF *setUpHDF(gediIOstruct *gediIO,gediRatStruct *gediRat,char useID,char *w
     }else hdfData->idLength=(int)strlen(waveID)+1;
   }else hdfData->idLength=7;
 
+  /*do we need to record the pulse*/
   if(gediIO->readPulse){
     hdfData->pRes=gediIO->pRes;
     hdfData->nPbins=gediIO->pulse->nBins;
@@ -2744,10 +3725,11 @@ waveStruct *allocateGEDIwaves(gediIOstruct *gediIO,gediRatStruct *gediRat,pCloud
     return(NULL);
   }
 
+  /*determine number of waveform bins*/
   waves->minZ=minZ-buff;
   waves->maxZ=maxZ+buff;
-
   waves->nBins=(int)((waves->maxZ-waves->minZ)/(double)gediIO->res);
+
   waves->nWaves=(int)(gediIO->useCount+gediIO->useInt+gediIO->useFrac);
   if(gediRat->readWave)waves->nWaves*=3;  /*if we are using full waveform*/
   ASSIGN_CHECKNULL_RETNULL(waves->wave,fFalloc(waves->nWaves,"result waveform",0));
@@ -3005,7 +3987,7 @@ int waveFromPointCloud(gediRatStruct *gediRat, gediIOstruct *gediIO,pCloudStruct
           if(sep<=gediRat->lobe[n].maxSepSq)rScale=1.0;
           else                             rScale=0.0;
         }
-      }else{     /*read assymmetric pulse*/
+      }else{     /*read assymmetric footprint*/
         xInd=(int)((dX*cos(gediRat->lobeAng)+dY*sin(gediRat->lobeAng))/(double)gediRat->wavefront->res)+gediRat->wavefront->x0;
         yInd=(int)((dY*cos(gediRat->lobeAng)-dX*sin(gediRat->lobeAng))/(double)gediRat->wavefront->res)+gediRat->wavefront->y0;
         if((xInd>=0)&&(xInd<gediRat->wavefront->nX)&&(yInd>=0)&&(yInd<gediRat->wavefront->nY)){
@@ -3109,11 +4091,10 @@ int applyPulseShape(gediIOstruct *gediIO,gediRatStruct *gediRat,waveStruct *wave
 {
   int i=0,j=0,k=0;
   int bin=0;
-  int binsAbove=0;
-  int binsBelow=0;
   float **temp=NULL;
   float **tempGr=NULL;
   float **tempC=NULL;
+  float contN=0;
 
   /*allocate temporary space*/
   ASSIGN_CHECKNULL_RETINT(temp,fFalloc(waves->nWaves,"temp waves",0));
@@ -3121,48 +4102,57 @@ int applyPulseShape(gediIOstruct *gediIO,gediRatStruct *gediRat,waveStruct *wave
     ASSIGN_CHECKNULL_RETINT(tempGr,fFalloc(waves->nWaves,"temp ground waves",0));
     ASSIGN_CHECKNULL_RETINT(tempC,fFalloc(waves->nWaves,"temp canopy waves",0));
   }
+
   for(k=0;k<waves->nWaves;k++){
     ASSIGN_CHECKNULL_RETINT(temp[k],falloc((uint64_t)waves->nBins,"temp waves",i+1));
     if(gediIO->ground){
       ASSIGN_CHECKNULL_RETINT(tempGr[k],falloc((uint64_t)waves->nBins,"temp ground waves",i+1));
-      ASSIGN_CHECKNULL_RETINT(tempC[k],falloc((uint64_t)waves->nBins,"temp camopy waves",i+1));
+      ASSIGN_CHECKNULL_RETINT(tempC[k],falloc((uint64_t)waves->nBins,"temp canopy waves",i+1));
     }
-    /*set to zero*/
+  }/*allocate temporary space*/
+
+  /*smooth by pulse shape*/
+  /*loop over methods*/
+  for(k=0;k<waves->nWaves;k++){
+
+    /*loop over waveform bins*/
     for(i=0;i<waves->nBins;i++){
+
+      contN=0.0;    /*reset counters*/
       temp[k][i]=0.0;
       if(gediIO->ground){
         tempGr[k][i]=0.0;
         tempC[k][i]=0.0;
       }
-    }
-  }/*allocate temporary space*/
 
-  /*maximum distance to loop*/
-  binsBelow=(int)((float)gediIO->pulse->centBin*gediIO->pRes/gediIO->res);
-  binsAbove=(int)((float)(gediIO->pulse->nBins-gediIO->pulse->centBin)*gediIO->pRes/gediIO->res);
+      /*loop over pulse bins*/
+      for(j=0;j<gediIO->pulse->nBins;j++){
 
-  /*smooth by pulse shape*/
-  /*loop over methods*/
-  for(k=0;k<waves->nWaves;k++){
-    /*loop over waveform*/
-    for(i=0;i<waves->nBins;i++){
-      /*loop over pulse*/
-      for(j=i-binsBelow;j<=(i+binsAbove);j++){
-        /*are we within the waveform?*/
-        if((j<0)||(j>=waves->nBins))continue;
-        /*pulse array bin*/
-        bin=(int)((float)(j-i)*gediIO->res/gediIO->pRes)+gediIO->pulse->centBin;
+        /*waveform array bin*/
+        bin=i+(int)((float)(j-gediIO->pulse->centBin)*gediIO->pRes/gediIO->res);
+
         /*are we within the pulse array?*/
-        if((bin>=0)&&(bin<gediIO->pulse->nBins)){
-          temp[k][j]+=waves->wave[k][i]*gediIO->pulse->y[bin];
+        if((bin>=0)&&(bin<waves->nBins)){
+          /*add up contributions*/
+          temp[k][i]+=waves->wave[k][bin]*gediIO->pulse->y[j];
           if(gediIO->ground){
-            tempGr[k][j]+=waves->ground[k][i]*gediIO->pulse->y[bin];
-            tempC[k][j]+=waves->canopy[k][i]*gediIO->pulse->y[bin];
+            tempGr[k][i]+=waves->ground[k][bin]*gediIO->pulse->y[j];
+            tempC[k][i]+=waves->canopy[k][bin]*gediIO->pulse->y[j];
           }
+          contN+=1.0;
         }/*bin bound check*/
       }/*pulse bin loop*/
-    }/*type loop*/
-  }/*bin loop*/
+
+      /*normalise*/
+      if(contN>0.0){
+        temp[k][i]/=contN;
+        if(gediIO->ground){
+          tempGr[k][i]/=contN;
+          tempC[k][i]/=contN;
+        }
+      }/*normalisation step*/
+    }/*bin loop*/
+  }/*type loop*/
 
   /*transfer arrays*/
   TTIDY((void **)waves->wave,waves->nWaves);
@@ -3387,7 +4377,7 @@ int processAggragate(gediRatStruct *gediRat,gediIOstruct *gediIO,waveStruct *wav
 waveStruct *makeGediWaves(gediRatStruct *gediRat,gediIOstruct *gediIO,pCloudStruct **data)
 {
   int j=0,k=0;
-  float tot=0;
+  float tot=0,minInt=0;
   waveStruct *waves=NULL;
   waveStruct *allocateGEDIwaves(gediIOstruct *,gediRatStruct *,pCloudStruct **,pointMapStruct *);
   int processAggragate(gediRatStruct *,gediIOstruct *,waveStruct *);
@@ -3401,7 +4391,7 @@ waveStruct *makeGediWaves(gediRatStruct *gediRat,gediIOstruct *gediIO,pCloudStru
   pointMapStruct *pointmap=NULL;
 
 
-  /*determine list of opints to use*/
+  /*determine list of points to use*/
   ASSIGN_CHECKNULL_RETNULL(pointmap,findIntersectingMap(gediRat,gediIO,data));
 
   /*determine ALS coverage*/
@@ -3429,7 +4419,7 @@ waveStruct *makeGediWaves(gediRatStruct *gediRat,gediIOstruct *gediIO,pCloudStru
       ISINTRETNULL(waveFromShadows(gediRat,gediIO,data,waves,pointmap));
 
     /*clean outliers if needed*/
-    if(gediRat->cleanOut){
+    if(gediRat->cleanOut&&(!gediIO->pcl)&&(!gediIO->pclPhoton)){
       ISINTRETNULL(cleanOutliers(waves,gediIO));
     } else waves->groundBreakElev=-100000000.0;
 
@@ -3459,12 +4449,18 @@ waveStruct *makeGediWaves(gediRatStruct *gediRat,gediIOstruct *gediIO,pCloudStru
       gediRat->decon->pulse=NULL;
       TIDY(gediRat->decon);
     }
+
+    /*find total integral to check that there is signal*/
+    minInt=10000.0;
+    for(j=0;j<waves->nBins;j++)if(waves->wave[0][j]<minInt)minInt=waves->wave[0][j];
     tot=0.0;
-    for(j=0;j<waves->nBins;j++)tot+=waves->wave[0][j]*gediIO->res;
+    for(j=0;j<waves->nBins;j++)tot+=(waves->wave[0][j]-minInt)*gediIO->res;
   }/*contains data*/
 
   /*check whether empty*/
-  if((tot<TOL)||(waves->nBins==0))gediRat->useFootprint=0;
+  if(gediRat->useFootprint){
+    if((tot<TOL)||(waves->nBins==0))gediRat->useFootprint=0;
+  }
   if(pointmap){
     TIDY(pointmap->fList);
     TIDY(pointmap->pList);
@@ -3588,8 +4584,7 @@ float findBlairSense(dataStruct *data,gediIOstruct *gediIO)
   else            wave=data->wave[data->useType];
 
   /*determine noise stats for sensitivity metric. Note this is using the threshold to get the mean and stdev*/
-  if(meanNoiseStats(wave,(uint32_t)data->nBins,&meanN,&stdev,&notNeeded,-1.0,1.0,(int)(gediIO->den->statsLen/gediIO->res)))
-    return(-1.1);
+  ISINTRETFLT(meanNoiseStats(wave, (uint32_t)data->nBins, &meanN, &stdev, &notNeeded, -1.0, 1.0, (int)(gediIO->den->statsLen / gediIO->res)));
   stdev-=meanN;
 
   /*total energy*/
@@ -3601,8 +4596,7 @@ float findBlairSense(dataStruct *data,gediIOstruct *gediIO)
   if(stdev>0.0){
     probNoise=0.05;
     probMiss=0.1;
-    if(gaussThresholds(1.0,XRES,(double)probNoise,(double)probMiss,&nNsig,&nSsig,&gediIO->noiseSigs)==-1)
-      return(-1.1);
+    ISINTRETFLT(gaussThresholds(1.0, XRES, (double)probNoise, (double)probMiss, &nNsig, &nSsig, &gediIO->noiseSigs));
 
     slope=2.0*M_PI/180.0;
     tanSlope=sin(slope)/cos(slope);

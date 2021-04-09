@@ -75,7 +75,12 @@ typedef struct{
   float maxDN;
   uint16_t epsg;
 
-  /*heigth bounds for volume*/
+  /*CHM settings*/
+  float hThresh;  /*threshold to avoid noise on CHM*/
+  float hRes;     /*resolution to make psuedo-waveform for CHM*/
+  float hRange;   /*maximum expected extent of points*/
+
+  /*height bounds for volume*/
   float minVolH;      /*minimum height to do volume over*/
   float maxVolH;      /*maximum height to do volume over*/
   uint16_t maxVint; /*maximum vegetatiob intensity*/
@@ -104,6 +109,12 @@ typedef struct{
   uint16_t epsg;   /*EPSG code*/
   int maxPoint;    /*max number of points per pixels*/
   int maxFoot;     /*max number of footprints per pixels*/
+  float **heightStack;  /*if making a height image, a stack of data*/
+  float *minH;          /*bottom of height array*/
+  float hRes;           /*height resolution to use*/
+  float hThresh;        /*threshold to avoid noise in height*/
+  int nHeight;
+  float hRange;
 }imageStruct;
 
 
@@ -136,7 +147,7 @@ int main(int argc,char **argv)
       if(dimage->epsg==0)readLasGeo(las);
       else               las->epsg=dimage->epsg;
       if(dimage->writeBounds)writeFileBounds(las,dimage->inList[i],dimage);
-      if(dimage->printNpoint)fprintf(stdout,"nPoints %s %u\n",dimage->inList[i],las->nPoints);
+      if(dimage->printNpoint)msgf("nPoints %s %u\n",dimage->inList[i],las->nPoints);
       if(dimage->findBounds)updateBounds(dimage->bounds,las);
       las=tidyLasFile(las);
     }
@@ -163,10 +174,9 @@ int main(int argc,char **argv)
     if(dimage->gapFill)fillGaps(dimage,image);
   }/*image drawing check*/
 
-
   /*write image*/
   if(dimage->drawInt||dimage->drawHeight||dimage->drawCov||dimage->drawVegVol)writeImage(dimage,image);
-  if(dimage->writeBounds)fprintf(stdout,"Written to %s\n",dimage->bNamen);
+  if(dimage->writeBounds)msgf("Written to %s\n",dimage->bNamen);
 
 
   /*tidy up arrays*/
@@ -194,6 +204,8 @@ imageStruct *tidyImage(imageStruct *image)
     TIDY(image->image);
     TIDY(image->nFoot);
     TIDY(image->nCan);
+    TIDY(image->minH);
+    TTIDY((void **)image->heightStack,image->nHeight);
     TIDY(image);
   }
   return(image);
@@ -230,7 +242,7 @@ void fillGaps(control *dimage,imageStruct *image)
       place=(uint64_t)j*(uint64_t)image->nX+(uint64_t)i;
       /*print progress*/
       if(((place*100)%((uint64_t)image->nX*(uint64_t)image->nY))<100){
-        fprintf(stdout,"Gap filling %d%%\n",(int)((place*100)/((uint64_t)image->nX*(uint64_t)image->nY)));
+        msgf("Gap filling %d%%\n",(int)((place*100)/((uint64_t)image->nX*(uint64_t)image->nY)));
       }
 
       /*is the data missing?*/
@@ -331,7 +343,7 @@ uint64_t *setFillList(int i,int j,int w,int *nTest,imageStruct *image)
   /*allocate maximum possible space*/
   tempN=(2*w+1)*(2*w+1)-((2*w-1)*(2*w-1));
   if(!(indList=(uint64_t *)calloc(tempN,sizeof(uint64_t)))){
-    fprintf(stderr,"error fill index list allocation.\n");
+    errorf("error fill index list allocation.\n");
     exit(1);
   }
   (*nTest)=0;
@@ -380,7 +392,7 @@ void writeImage(control *dimage,imageStruct *image)
 
 void collateImage(control *dimage,lasFile *las,imageStruct *image)
 {
-  int place=0;
+  int place=0,hBin=0;
   int xBin=0,yBin=0;
   uint32_t j=0;
   double x=0,y=0,z=0;
@@ -390,7 +402,7 @@ void collateImage(control *dimage,lasFile *las,imageStruct *image)
 
   /*check EPSG*/
   if(las->epsg!=image->epsg){
-    fprintf(stderr,"EPSG mismatch %d %d\n",(int)image->epsg,las->epsg);
+    errorf("EPSG mismatch %d %d\n",(int)image->epsg,las->epsg);
     exit(1);
   }
 
@@ -399,14 +411,20 @@ void collateImage(control *dimage,lasFile *las,imageStruct *image)
     readLasPoint(las,j);
     setCoords(&x,&y,&z,las);
 
-    xBin=(int)((x-image->minX)/(double)dimage->res);
-    yBin=(int)((image->maxY-y)/(double)dimage->res);
+    xBin=(int)((x-image->minX)/(double)dimage->res+0.5);
+    yBin=(int)((image->maxY-y)/(double)dimage->res+0.5);
 
     if((xBin>=0)&&(xBin<image->nX)&&(yBin>=0)&&(yBin<image->nY)){
       place=yBin*image->nX+xBin;
       if(dimage->drawInt)image->jimlad[place]+=(float)las->refl;
       else if(dimage->drawHeight){
-        if((dimage->onlyGround==0)||(las->classif==2))image->jimlad[place]+=(float)z;
+        if((dimage->onlyGround)&&(las->classif==2))image->jimlad[place]+=(float)z;
+        else if(dimage->onlyGround==0){
+          if(image->minH[place]<-999.0)image->minH[place]=(float)z-image->hRange/2.0;
+          hBin=(int)(((float)z-image->minH[place])/image->hRes+0.5);
+          if((hBin>=0)&&(hBin<image->nHeight))image->heightStack[place][hBin]+=1.0;
+          else errorf("Height bounds not quite wide enough. Point %f bounds %f %f\n",z,image->minH[place],image->minH[place]+image->hRange);
+        }
       }else if(dimage->drawVegVol)testVegVol(&image->jimlad[place],(float)z,las->refl,dimage,&image->nIn[place],las->classif);
       if(dimage->findDens&&(las->retNumb==las->nRet))image->nFoot[place]++;
       if(dimage->drawCov&&(las->classif!=2))image->nCan[place]++;
@@ -416,6 +434,7 @@ void collateImage(control *dimage,lasFile *las,imageStruct *image)
       }
     }
   }/*point loop*/
+
   return;
 }/*collateImage*/
 
@@ -443,6 +462,7 @@ void finishImage(control *dimage,imageStruct *image)
   int i=0;
   int nContP=0,nContF=0;
   float meanPoint=0,meanFoot=0;
+  float findTop(imageStruct *,int);
   void processHedges(imageStruct *,control *);
 
 
@@ -452,12 +472,20 @@ void finishImage(control *dimage,imageStruct *image)
   if(!dimage->drawVegVol){
     for(i=image->nX*image->nY-1;i>=0;i--){
       if(image->nIn[i]>0){
+        /*normalise elevationsor find top  if needed*/
         if(dimage->drawInt||dimage->drawHeight){
-          image->jimlad[i]/=(float)image->nIn[i];
+          /*normalise or find top*/
+          if(dimage->drawInt||dimage->onlyGround)             image->jimlad[i]/=(float)image->nIn[i];
+          else if(dimage->drawHeight&&(dimage->onlyGround==0))image->jimlad[i]=findTop(image,i);
+          /*bounds for scaling geotiff*/
           if(image->jimlad[i]<image->min)image->min=image->jimlad[i];
           if(image->jimlad[i]>image->max)image->max=image->jimlad[i];
         }
+
+        /*scale to canopy cover percent if needed*/
         if(dimage->drawCov)image->jimlad[i]=((float)image->nCan[i]/(float)image->nIn[i])*100.0;
+
+        /*find density of needed*/
         if(dimage->findDens){
           if(image->nIn[i]>(uint64_t)image->maxPoint)image->maxPoint=image->nIn[i];
           if(image->nFoot[i]>(uint64_t)image->maxFoot)image->maxFoot=image->nFoot[i];
@@ -483,8 +511,8 @@ void finishImage(control *dimage,imageStruct *image)
   if(dimage->findDens){
     if(nContF>0)meanFoot/=(float)nContF;
     if(nContP>0)meanPoint/=(float)nContP;
-    fprintf(stdout,"Mean point density %f per m2\n",meanPoint/(dimage->res*dimage->res));
-    fprintf(stdout,"Mean footprint density %f per m2\n",meanFoot/(dimage->res*dimage->res));
+    msgf("Mean point density %f per m2\n",meanPoint/(dimage->res*dimage->res));
+    msgf("Mean footprint density %f per m2\n",meanFoot/(dimage->res*dimage->res));
   }
 
 
@@ -511,6 +539,50 @@ void finishImage(control *dimage,imageStruct *image)
   }
   return;
 }/*finishImage*/
+
+
+/*##################################################*/
+/*find the tree top*/
+
+float findTop(imageStruct *image,int i)
+{
+  int j=0;
+  float top=0,tot=0;
+  float *cumul=NULL;
+  float x1=0,x2=0;
+  float y1=0,y2=0;
+  float m=0,c=0,thresh=0;
+
+  /*find total and cumulative*/
+  tot=0.0;
+  cumul=falloc(image->nHeight,"cumulative wave",0);
+  for(j=0;j<image->nHeight;j++){
+    tot+=image->heightStack[i][j];
+    cumul[j]=tot;
+  }
+
+  /*find crossing point and interpolate*/
+  thresh=tot*image->hThresh;
+  for(j=image->nHeight-2;j>=0;j--){
+    if(cumul[j]<=thresh){
+      /*points either side of crossing*/
+      x1=(float)(j+1)*image->hRes+image->minH[i];
+      x2=(float)j*image->hRes+image->minH[i];
+      y1=cumul[j+1];
+      y2=cumul[j];
+
+      /*interpolate with a line*/
+      m=(y2-y1)/(x2-x1);
+      c=y1-m*x1;
+      top=(thresh-c)/m;
+
+      break;
+    }
+  }/*height bin loop*/
+
+  TIDY(cumul);
+  return(top);
+}/*findTop*/
 
 
 /*##################################################*/
@@ -580,13 +652,11 @@ void updateBounds(double *bounds,lasFile *las)
 
 imageStruct *allocateImage(control *dimage)
 {
-  int i=0;
-  /*uint32_t j=0;
-  double x=0,y=0,z=0;*/
+  int i=0,j=0;
   imageStruct *image=NULL;
 
   if(!(image=(imageStruct *)calloc(1,sizeof(imageStruct)))){
-    fprintf(stderr,"error imageStruct allocation.\n");
+    errorf("error imageStruct allocation.\n");
     exit(1);
   }
 
@@ -599,32 +669,49 @@ imageStruct *allocateImage(control *dimage)
   /*size of image*/
   image->nX=(int)((image->maxX-image->minX)/(double)dimage->res)+1;
   image->nY=(int)((image->maxY-image->minY)/(double)dimage->res)+1;
-  fprintf(stdout,"Image will be %d by %d\n",image->nX,image->nY);
+  msgf("Image will be %d by %d\n",image->nX,image->nY);
 
   /*allocate data arrays*/
   if(dimage->drawInt||dimage->drawHeight||dimage->drawCov||dimage->drawVegVol)image->jimlad=falloc((uint64_t)image->nX*(uint64_t)image->nY,"jimlad",0);
   else                                                                        image->jimlad=NULL;
   if(dimage->drawCov){
     if(!(image->nCan=(uint64_t *)calloc(image->nX*image->nY,sizeof(uint64_t)))){
-      fprintf(stderr,"error in canopy allocation\n");
+      errorf("error in canopy allocation\n");
       exit(1);
     }
   }
   if(!(image->nIn=(uint64_t *)calloc(image->nX*image->nY,sizeof(uint64_t)))){
-    fprintf(stderr,"error in canopy allocation\n");
+    errorf("error in canopy allocation\n");
     exit(1);
   }
   if(dimage->findDens)image->nFoot=ialloc(image->nX*image->nY,"nFoot",0);
   else                image->nFoot=NULL;
+  /*height image if needed*/
+  if(dimage->drawHeight&&(dimage->onlyGround==0)){
+    image->heightStack=fFalloc(image->nX*image->nY,"height stack",0);
+    image->minH=falloc(image->nX*image->nY,"height array start",0);
+    image->hRes=dimage->hRes;
+    image->hThresh=dimage->hThresh;
+    image->hRange=dimage->hRange;
+    image->nHeight=(int)(image->hRange/image->hRes+1.0);
+  }else image->heightStack=NULL;
+
+  /*set all arrays to zero*/
   for(i=image->nX*image->nY-1;i>=0;i--){
     if(dimage->drawInt||dimage->drawHeight)image->jimlad[i]=0.0;
     if(dimage->findDens)image->nFoot[i]=0;
     if(dimage->drawCov)image->nCan[i]=0;
+    if(dimage->drawHeight&&(dimage->onlyGround==0)){
+      image->minH[i]=-9999.0;
+      image->heightStack[i]=falloc(image->nHeight,"height stack",i+1);
+      for(j=0;j<image->nHeight;j++)image->heightStack[i][j]=0.0;
+    }
     image->nIn[i]=0;
   }
   image->min=1000000.0;
   image->max=-1000000.0;
   image->maxFoot=image->maxPoint=0;
+
 
   /*geolocation*/
   image->geoI[0]=image->geoI[1]=0;
@@ -646,7 +733,7 @@ control *readCommands(int argc,char **argv)
   char **readInList(int *,char *);
 
   if(!(dimage=(control *)calloc(1,sizeof(control)))){
-    fprintf(stderr,"error contN allocation.\n");
+    errorf("error contN allocation.\n");
     exit(1);
   }
 
@@ -668,6 +755,10 @@ control *readCommands(int argc,char **argv)
   dimage->charImage=1;
   dimage->onlyGround=0;
   dimage->gapFill=0;
+  /*chm settings*/
+  dimage->hThresh=0.99;  /*threshold to avoid noise on CHM*/
+  dimage->hRes=0.25;     /*resolution to make psuedo-waveform for CHM*/
+  dimage->hRange=100.0;  /*maximum expected extent of points*/
   /*bounds*/
   dimage->findBounds=1;
   dimage->bounds[0]=dimage->bounds[1]=1000000000.0;
@@ -718,12 +809,21 @@ control *readCommands(int argc,char **argv)
       }else if(!strncasecmp(argv[i],"-cover",6)){
         dimage->drawCov=1;
         dimage->drawInt=dimage->drawHeight=0;
+      }else if(!strncasecmp(argv[i],"-hThresh",8)){
+        checkArguments(1,i,argc,"-hThres");
+        dimage->hThresh=atof(argv[++i]);
+      }else if(!strncasecmp(argv[i],"-hRes",5)){
+        checkArguments(1,i,argc,"-hRes");
+        dimage->hRes=atof(argv[++i]);
+      }else if(!strncasecmp(argv[i],"-hRange",7)){
+        checkArguments(1,i,argc,"-hRange");
+        dimage->hRange=atof(argv[++i]);
       }else if(!strncasecmp(argv[i],"-writeBound",11)){
         checkArguments(1,i,argc,"-writeBound");
         dimage->writeBounds=1;
         strcpy(dimage->bNamen,argv[++i]);
         if((dimage->bFile=fopen(dimage->bNamen,"w"))==NULL){
-          fprintf(stderr,"Error opening output file %s\n",dimage->bNamen);
+          errorf("Error opening output file %s\n",dimage->bNamen);
           exit(1);
         }
       }else if(!strncasecmp(argv[i],"-pBuff",6)){
@@ -751,10 +851,10 @@ control *readCommands(int argc,char **argv)
         checkArguments(1,i,argc,"-maxVint");
         dimage->maxVint=(uint16_t)atoi(argv[++i]);   
       }else if(!strncasecmp(argv[i],"-help",5)){
-        fprintf(stdout,"\n#####\nProgram to create GEDI waveforms from ALS las files\n#####\n\n-input name;     lasfile input filename\n-output name;    output filename\n-inList list;    input file list for multiple files\n-res res;        image resolution, in metres\n-bounds minX minY maxX maxY;     user defined image bounds\n-float;          output as float\n-height;         draw height image\n-DTM;        make a bare Earth DEM\n-cover;          draw canopy cover map\n-noInt;          no image\n-findDens;       find point and footprint density\n-epsg n;         geolocation code if not read from file\n-writeBound n;   write file bounds to a file\n-pBuff s;        point reading buffer size in Gbytes\n-printNpoint;    print number of points in each file\n\n-vegVol;     draw hedge volume\n-minVh h;\n-maxVh h;\n-maxVint dn;\nQuestions to svenhancock@gmail.com\n\n");
+        msgf("\n#####\nProgram to create GEDI waveforms from ALS las files\n#####\n\n-input name;     lasfile input filename\n-output name;    output filename\n-inList list;    input file list for multiple files\n-res res;        image resolution, in metres\n-bounds minX minY maxX maxY;     user defined image bounds\n-float;          output as float\n-height;         draw height image\n-DTM;            make a bare Earth DEM\n-cover;          draw canopy cover map\n-noInt;          no image\n-findDens;       find point and footprint density\n-epsg n;         geolocation code if not read from file\n-hRange x;       range to expect points over for CHM\n-hThresh x;      percentile threshold to use for CHM in presence of noise\n-writeBound n;   write file bounds to a file\n-pBuff s;        point reading buffer size in Gbytes\n-printNpoint;    print number of points in each file\n\n-vegVol;     draw hedge volume\n-minVh h;\n-maxVh h;\n-maxVint dn;\nQuestions to svenhancock@gmail.com\n\n");
         exit(1);
       }else{
-        fprintf(stderr,"%s: unknown argument on command line: %s\nTry gediRat -help\n",argv[0],argv[i]);
+        errorf("%s: unknown argument on command line: %s\nTry gediRat -help\n",argv[0],argv[i]);
         exit(1);
       }
     }

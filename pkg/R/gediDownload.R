@@ -9,7 +9,7 @@
 #'@param buffer_size integer; the size of download chunk in KB to hold in memory before writing to file, default 512.
 #'@param timeout integer; connection timeout in seconds.
 #'
-#'@return No return value on success, on failure it will \code{stop()}
+#'@return No return value on success, on failure it will `stop()`
 #'@references Credits to Cole Krehbiel. Code adapted from <https://git.earthdata.nasa.gov/projects/LPDUR/repos/daac_data_download_r/browse/DAACDataDownload.R>
 #'@examples
 #'\dontrun{
@@ -97,8 +97,14 @@ gediDownloadFile = function(url, outdir, overwrite, buffer_size, netrc, timeout)
 
   # Connection config
   h = curl::new_handle()
-  curl::handle_setopt(h, netrc=1, netrc_file=netrc, resume_from=resume_from, connecttimeout=timeout)
+  curl::handle_setopt(h, resume_from=resume_from, connecttimeout=timeout)
+  netrc_data = readLines(netrc)
+  location = grep("urs.earthdata.", netrc_data)
+  user = sub("login ([^ ]+).*", "\\1", netrc_data[location+1])
+  password = sub("password ([^ ]+).*", "\\1", netrc_data[location+2])
+  secret = jsonlite::base64_enc(paste(user, password, sep = ":"))
 
+  curl::handle_setheaders(h, Authorization = paste("Basic", secret))
   tryCatch({
     fileHandle=file(resume, open="ab", raw = T)
     message("Connecting...")

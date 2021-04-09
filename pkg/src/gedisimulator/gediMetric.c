@@ -13,6 +13,8 @@
 #include "libOctree.h"
 #include "gediIO.h"
 #include "gediNoise.h"
+#include "time.h"
+
 #ifdef USEPHOTON
   #include "photonCount.h"
 #endif
@@ -61,7 +63,6 @@ float rhoG;
 float rhoC;
 
 
-
 /*###########################################################*/
 /*main*/
 
@@ -81,7 +82,7 @@ int main(int argc,char **argv)
   int modifyTruth(dataStruct *,noisePar *);
   void checkWaveformBounds(dataStruct *,control *);
   int photonCountCloud(float *,dataStruct *,photonStruct *,char *,int,denPar *,noisePar *);
-  float *processed=NULL,*denoised=NULL;;
+  float *processed=NULL,*denoised=NULL,*pclWave=NULL;
 
   /*read command Line*/
   ASSIGN_CHECKNULL_RETONE(dimage,readCommands(argc,argv));
@@ -91,9 +92,11 @@ int main(int argc,char **argv)
   
   /*set photon rates if needed*/
   #ifdef USEPHOTON
-  if(dimage->ice2||dimage->pclPhoton)setPhotonRates(&dimage->photonCount);
+  if(dimage->ice2||dimage->gediIO.pclPhoton)setPhotonRates(&dimage->photonCount);
   #endif
 
+  /*read the pulse if needed*/
+  if(dimage->readPulse)setGediPulse(&dimage->gediIO,NULL);
 
   /*allocate metric array*/
   if(!(metric=(metStruct *)calloc(1,sizeof(metStruct)))){
@@ -130,26 +133,27 @@ int main(int argc,char **argv)
       ISINTRETONE(determineTruth(data,dimage));
 
       /*add noise if needed*/
-      if(!dimage->pclPhoton){
-        ISINTRETONE(addNoise(data,&dimage->noise,dimage->gediIO.fSigma,dimage->gediIO.pSigma,dimage->gediIO.res,rhoC,rhoG));
+      if(!dimage->gediIO.pclPhoton){
+        ISINTRETINT(addNoise(data,&dimage->noise,dimage->gediIO.fSigma,dimage->gediIO.pSigma,dimage->gediIO.res,rhoC,rhoG));
+        if(dimage->gediIO.pcl)pclWave=data->noised;
+      }else if(dimage->gediIO.pclPhoton)pclWave=data->wave[data->useType];
+
+
+      /*do pcl if needed*/
+      #ifdef USEPHOTON
+      if(dimage->gediIO.pclPhoton||dimage->gediIO.pcl) {
+        ASSIGN_CHECKNULL_RETINT(data->noised,uncompressPhotons(pclWave,data,&dimage->photonCount,&dimage->noise,&dimage->gediIO));
       }
-      else {
-        #ifdef USEPHOTON
-        ASSIGN_CHECKNULL_RETONE(data->noised,uncompressPhotons(data->wave[data->useType],data,&dimage->photonCount,&dimage->noise,&dimage->gediIO));
-        #else
-        errorf("Can't use photon, not compiled with -DUSEPHOTON!\n");
-        #endif
-      }
+      #else
+      errorf("Can't use photon, not compiled with -DUSEPHOTON!\n");
+      #endif
+      pclWave=NULL;
+
+
 
       /*process waveform*/
       /*denoise, or*if we are doing PCL on photon counting, convert to photon count*/
-      ASSIGN_CHECKNULL_RETONE(denoised,processFloWave(data->noised,data->nBins,dimage->gediIO.den,1.0));
-      
-/*if(dimage->pclPhoton){
-  for(j=0;j<data->nBins;j++)msgf("wave %d %d %f %f %f\n",i,j,denoised[j],data->wave[0][j],data->noised[j]);
-  fflush(stdout);
-}
-errorf("denoised\n");fflush(stderr);*/
+      ASSIGN_CHECKNULL_RETINT(denoised, processFloWave(data->noised,data->nBins,dimage->gediIO.den,1.0));
 
       /*check that the wave is still usable*/
       if(checkUsable(denoised,data->nBins)){
@@ -158,30 +162,32 @@ errorf("denoised\n");fflush(stderr);*/
 
           /*Gaussian fit*/
           if(dimage->noRHgauss==0){
-            ASSIGN_CHECKNULL_RETONE(processed,processFloWave(denoised,data->nBins,dimage->gediIO.gFit,1.0));
+            ASSIGN_CHECKNULL_RETINT(processed, processFloWave(denoised,data->nBins,dimage->gediIO.gFit,1.0));
           }
+
 
           /*shift Gaussian centres to align to absolute elevation*/
           alignElevation(data->z[0],data->z[data->nBins-1],dimage->gediIO.gFit->gPar,dimage->gediIO.gFit->nGauss);
 
+
           /*determine metrics*/
-          ISINTRETONE(findMetrics(metric,dimage->gediIO.gFit->gPar,dimage->gediIO.gFit->nGauss,denoised,data->noised,data->nBins,data->z,dimage,data));
+          ISINTRETINT(findMetrics(metric,dimage->gediIO.gFit->gPar,dimage->gediIO.gFit->nGauss,denoised,data->noised,data->nBins,data->z,dimage,data));
+
 
           /*write results*/
-          if(dimage->readBinLVIS||dimage->readHDFlvis||dimage->readHDFgedi){
-            ISINTRETONE(writeResults(data,dimage,metric,i,denoised,processed,dimage->gediIO.inList[0]));
+          if(dimage->readBinLVIS||dimage->readHDFlvis||dimage->readHDFgedi) {
+            ISINTRETINT(writeResults(data,dimage,metric,i,denoised,processed,dimage->gediIO.inList[0]));
           }
           else {
-            ISINTRETONE(writeResults(data,dimage,metric,i,denoised,processed,dimage->gediIO.inList[i]));
+            ISINTRETINT(writeResults(data,dimage,metric,i,denoised,processed,dimage->gediIO.inList[i]));
           }
         }else{  /*ICESat-2 mode*/
-          ISINTRETONE(photonCountCloud(denoised,data,&dimage->photonCount,dimage->outRoot,i,dimage->gediIO.den,&dimage->noise));
+          ISINTRETINT(photonCountCloud(denoised,data,&dimage->photonCount,dimage->outRoot,i,dimage->gediIO.den,&dimage->noise));
         }/*operation mode switch*/
       }else{/*still usable after denoising?*/
 errorf("No longer usable\n");
       }
     }/*is the data usable*/
-
 
     /*tidy as we go along*/
     TIDY(processed);
@@ -204,7 +210,6 @@ errorf("No longer usable\n");
     }
     TIDY(dimage->gediIO.gFit->gPar);
     TIDY(dimage->gediIO.den->gPar);
-    dimage->gediIO.den->nGauss=0;
     dimage->gediIO.gFit->nGauss=0;
     TIDY(metric->rhMax);
     TIDY(metric->rhInfl);
@@ -259,6 +264,13 @@ errorf("No longer usable\n");
       fclose(dimage->opooGauss);
       dimage->opooGauss=NULL;
     }
+    if(dimage->gediIO.pulse){
+      TIDY(dimage->gediIO.pulse->x);
+      TIDY(dimage->gediIO.pulse->y);
+      TIDY(dimage->gediIO.pulse->resamp);
+      TIDY(dimage->gediIO.pulse);
+    }
+    dimage->gediIO.den->nGauss=0;
     #ifdef USEPHOTON
     if(dimage->photonCount.opoo){
       fclose(dimage->photonCount.opoo);
@@ -522,9 +534,11 @@ int writeResults(dataStruct *data,control *dimage,metStruct *metric,int numb,flo
     fprintf(dimage->opooMet,", %d niM2, %d niM2.1",14+4*metric->nRH+1+dimage->bayesGround+19,14+4*metric->nRH+1+dimage->bayesGround+20);
     fprintf(dimage->opooMet,", %d meanNoise, %d noiseStdev, %d noiseThresh",14+4*metric->nRH+1+dimage->bayesGround+21,14+4*metric->nRH+1+dimage->bayesGround+22,14+4*metric->nRH+1+dimage->bayesGround+23);
     offset=24;
-    if(dimage->hdfGedi->solarElev){
-      fprintf(dimage->opooMet,", %d solarElev,",14+4*metric->nRH+1+dimage->bayesGround+offset);
-      offset++;
+    if(dimage->hdfGedi){   /*has the HDF structure been allocated*/
+      if(dimage->hdfGedi->solarElev){
+        fprintf(dimage->opooMet,", %d solarElev,",14+4*metric->nRH+1+dimage->bayesGround+offset);
+        offset++;
+      }
     }
     if(dimage->noCanopy==0){
       fprintf(dimage->opooMet,", %d FHDhist, %d FHDcan, %d FHDcanHist",14+4*metric->nRH+1+dimage->bayesGround+offset,14+4*metric->nRH+1+dimage->bayesGround+offset+1,14+4*metric->nRH+1+dimage->bayesGround+offset+3);
@@ -537,6 +551,7 @@ int writeResults(dataStruct *data,control *dimage,metStruct *metric,int numb,flo
       for(i=0;i<metric->laiBins;i++)fprintf(dimage->opooMet," %d hiLAI%gt%g,",14+4*metric->nRH+1+dimage->bayesGround+offset+i+3+3*metric->laiBins,(float)i*dimage->laiRes,(float)(i+1)*dimage->laiRes);
       for(i=0;i<metric->laiBins;i++)fprintf(dimage->opooMet," %d hmLAI%gt%g,",14+4*metric->nRH+1+dimage->bayesGround+offset+i+3+4*metric->laiBins,(float)i*dimage->laiRes,(float)(i+1)*dimage->laiRes);
     }
+    fprintf(dimage->opooMet," %d gSlope,",14+4*metric->nRH+1+dimage->bayesGround+offset+3+5*metric->laiBins);
     //for(i=0;i<metric->nLm;i++)fprintf(dimage->opooMet,", %d LmomGauss%d",14+4*metric->nRH+1+dimage->bayesGround+21+i,i+1);
     //for(i=0;i<metric->nLm;i++)fprintf(dimage->opooMet,", %d LmomInfl%d",14+4*metric->nRH+1+dimage->bayesGround+21+metric->nLm+i,i+1);
     //for(i=0;i<metric->nLm;i++)fprintf(dimage->opooMet,", %d LmomMax%d",14+4*metric->nRH+1+dimage->bayesGround+21+2*metric->nLm+i,i+1);
@@ -581,7 +596,9 @@ int writeResults(dataStruct *data,control *dimage,metStruct *metric,int numb,flo
   fprintf(dimage->opooMet," %f %f",data->zen,metric->FHD);
   fprintf(dimage->opooMet," %f %f",metric->niM2,metric->niM21);
   fprintf(dimage->opooMet," %f %f %f",dimage->gediIO.den->meanN,(dimage->gediIO.den->thresh-dimage->gediIO.den->meanN)/dimage->gediIO.den->threshScale,dimage->gediIO.den->thresh);
-  if(dimage->hdfGedi->solarElev)fprintf(dimage->opooMet," %f",dimage->hdfGedi->solarElev[numb]);
+  if(dimage->hdfGedi){
+    if(dimage->hdfGedi->solarElev)fprintf(dimage->opooMet," %f",dimage->hdfGedi->solarElev[numb]);
+  }
   if(dimage->noCanopy==0){
     fprintf(dimage->opooMet," %f %f %f",metric->FHDhist,metric->FHDcan,metric->FHDcanH);
     fprintf(dimage->opooMet," %f %f",metric->FHDcanGauss,metric->FHDcanGhist);
@@ -591,6 +608,7 @@ int writeResults(dataStruct *data,control *dimage,metStruct *metric,int numb,flo
     for(i=0;i<metric->laiBins;i++)fprintf(dimage->opooMet," %f",metric->hiLAI[i]);
     for(i=0;i<metric->laiBins;i++)fprintf(dimage->opooMet," %f",metric->hmLAI[i]);
   }
+  fprintf(dimage->opooMet," %f",metric->gSlope);
   /*for(i=0;i<metric->nLm;i++)fprintf(dimage->opooMet," %f",metric->LmomGau[i]);
   for(i=0;i<metric->nLm;i++)fprintf(dimage->opooMet," %f",metric->LmomInf[i]);
   for(i=0;i<metric->nLm;i++)fprintf(dimage->opooMet," %f",metric->LmomMax[i]);
@@ -661,7 +679,7 @@ int findMetrics(metStruct *metric,float *gPar,int nGauss,float *denoised,float *
   float *mu=NULL,*sig=NULL;
   float *energy=NULL,*A=NULL;
   float gaussCover(float *,int,float *,float *,int,int);
-  double gaussianGround(float *,float *,int *,int,float);
+  double gaussianGround(float *,float *,float *,int *,int,float,float *,dataStruct *,denPar *);
   double maxGround(float *,double *,int);
   double inflGround(float *,double *,int);
   double* bayesGround(float *,int,control *,metStruct *,double *,dataStruct *);
@@ -702,7 +720,7 @@ int findMetrics(metStruct *metric,float *gPar,int nGauss,float *denoised,float *
   for(i=0;i<nBins;i++)metric->totE+=denoised[i]*dimage->gediIO.res;
 
   /*Blair sensitivity*/
-  ASSIGN_CHECKINT_RETINT(metric->blairSense,findBlairSense(data,&dimage->gediIO));
+  ASSIGN_CHECKFLT_RETINT(metric->blairSense,findBlairSense(data,&dimage->gediIO));
   
   /*smooth waveform for finding ground by max and inflection*/
   setDenoiseDefault(&den);
@@ -714,8 +732,8 @@ int findMetrics(metStruct *metric,float *gPar,int nGauss,float *denoised,float *
   ASSIGN_CHECKNULL_RETINT(smoothed,processFloWave(denoised,nBins,&den,1.0));
 
   /*ground by Gaussian fit*/
-  if(dimage->noRHgauss==0)metric->gHeight=gaussianGround(energy,mu,&gInd,nGauss,tot);
-  else                    metric->gHeight=-1.0;
+  if((dimage->noRHgauss==0)&&(nGauss>0))metric->gHeight=gaussianGround(energy,mu,sig,&gInd,nGauss,tot,&metric->gSlope,data,dimage->gediIO.den);
+  else                    metric->gHeight=metric->gSlope=-1.0;
 
   /*canopy cover*/
   metric->cov=gaussCover(denoised,nBins,mu,energy,nGauss,gInd);
@@ -727,8 +745,8 @@ int findMetrics(metStruct *metric,float *gPar,int nGauss,float *denoised,float *
   ASSIGN_CHECKDBL_RETINT(metric->inflGround,inflGround(smoothed,z,nBins));
 
   /*rh metrics with Gaussian ground*/
-  if(dimage->noRHgauss==0) {ASSIGN_CHECKNULL_RETINT(metric->rh,findRH(denoised,z,nBins,metric->gHeight,dimage->rhRes,&metric->nRH));}
-  else {ASSIGN_CHECKNULL_RETINT(metric->rh,blankRH(dimage->rhRes,&metric->nRH));}
+  if((dimage->noRHgauss==0)&&(nGauss>0)) { ASSIGN_CHECKNULL_RETINT(metric->rh,findRH(denoised,z,nBins,metric->gHeight,dimage->rhRes,&metric->nRH)); }
+  else                                   { ASSIGN_CHECKNULL_RETINT(metric->rh,blankRH(dimage->rhRes,&metric->nRH)); }
 
   /*rh metrics with maximum ground*/
   ASSIGN_CHECKNULL_RETINT(metric->rhMax,findRH(denoised,z,nBins,metric->maxGround,dimage->rhRes,&metric->nRH));
@@ -775,7 +793,6 @@ int findMetrics(metStruct *metric,float *gPar,int nGauss,float *denoised,float *
     ASSIGN_CHECKNULL_RETINT(metric->hiLAI,halfEnergyLAIprofile(denoised,z,nBins,dimage->laiRes,dimage->rhoRatio,metric->inflGround,dimage->maxLAIh,&metric->laiBins));
     ASSIGN_CHECKNULL_RETINT(metric->hmLAI,halfEnergyLAIprofile(denoised,z,nBins,dimage->laiRes,dimage->rhoRatio,metric->maxGround,dimage->maxLAIh,&metric->laiBins));
   }
-
 
   /*signal start and end*/
   findSignalBounds(denoised,z,nBins,&metric->tElev,&metric->bElev,dimage);
@@ -1271,10 +1288,11 @@ float gaussCover(float *wave,int nBins,float *mu,float *energy,int nGauss,int gI
 /*####################################################*/
 /*Gaussian ground*/
 
-double gaussianGround(float *energy,float *mu,int *gInd,int nGauss,float tot)
+double gaussianGround(float *energy,float *mu,float *sig,int *gInd,int nGauss,float tot,float *slope,dataStruct *data,denPar *den)
 {
   int i=0;
   float thresh=0;
+  float baseSig=0;
   double gHeight=0;
 
   (*gInd)=nGauss-1;
@@ -1286,6 +1304,15 @@ double gaussianGround(float *energy,float *mu,int *gInd,int nGauss,float tot)
       *gInd=i;
     }
   }
+
+  if(sig==NULL){
+    errorf("No signal\n");
+  }
+
+  /*determine slope*/
+  baseSig=sqrt(data->pSigma*data->pSigma+den->sWidth*den->sWidth+den->psWidth*den->psWidth+den->msWidth+den->msWidth);
+  if(sig[*gInd]>baseSig)*slope=atan2(sqrt(sig[*gInd]*sig[*gInd]-baseSig*baseSig),data->fSigma)*180.0/M_PI;
+  else                  *slope=0.0;
 
   return(gHeight);
 }/*gaussianGround*/
@@ -1502,11 +1529,15 @@ int photonCountCloud(float *denoised,dataStruct *data,photonStruct *photonCount,
 
 control *readCommands(int argc,char **argv)
 {
-  int i=0;
+  int i=0,j=0;
   control *dimage=NULL;
   void setDenoiseDefault(denPar *);
   int readPulse(denPar *);
   void writeHelp();
+
+  /*by default, set the seed as time. Can be overridden later*/
+  srand2((long)time(NULL));
+  for(j=(int)(time(NULL)%50);j>=0;j--)rand2();
 
   /*allocate structures*/
   if(!(dimage=(control *)calloc(1,sizeof(control)))){
@@ -1536,6 +1567,7 @@ control *readCommands(int argc,char **argv)
   dimage->hdfGedi=NULL;
   dimage->gediIO.useBeam[0]=dimage->gediIO.useBeam[1]=dimage->gediIO.useBeam[2]=dimage->gediIO.useBeam[3]=\
     dimage->gediIO.useBeam[4]=dimage->gediIO.useBeam[5]=dimage->gediIO.useBeam[6]=dimage->gediIO.useBeam[7]=1;    /*read all waves*/
+  dimage->gediIO.pulse=NULL;
 
   /*scan settings*/
   dimage->gediIO.pSigma=0.764331; /*pulse length*/
@@ -1555,6 +1587,7 @@ control *readCommands(int argc,char **argv)
   dimage->bayesGround=0;
   dimage->noise.missGround=0;
   dimage->noise.linkNoise=0;
+  dimage->noise.shotNoise=0;
   dimage->noise.driftFact=0.0;
   dimage->gediIO.linkPsig=dimage->gediIO.pSigma; /*pulse length*/
   dimage->gediIO.linkFsig=5.5;      /*footprint width*/
@@ -1574,6 +1607,7 @@ control *readCommands(int argc,char **argv)
   dimage->coord2dp=1;         /*round up coords in output*/
   dimage->useBounds=0;        /*process all data provided*/
   dimage->writeGauss=0;       /*do not write Gaussian parameters*/
+  dimage->readPulse=0;        /*don't read a pulse*/
 
   /*set default denoising parameters*/
   setDenoiseDefault(dimage->gediIO.den);
@@ -1619,19 +1653,22 @@ control *readCommands(int argc,char **argv)
   dimage->readL2=0;   /*do not read L2*/
   /*photon counting*/
   dimage->ice2=0;             /*GEDI mode, rather than ICESat-2*/
-  dimage->pclPhoton=0;        /*full waveform rather thsn PCL*/
   #ifdef USEPHOTON
   dimage->photonCount.designval=2.1;
   dimage->photonCount.prob=NULL;
   dimage->photonCount.pBins=0;
-  dimage->photonCount.H=200.0;
-  dimage->photonCount.nPhotC=dimage->photonCount.designval;
-  dimage->photonCount.nPhotG=-1.0;     /*blank number*/
+  dimage->photonCount.H=200.0;   /*this is thew two way distance, so a 100 m window, halved later*/
+  dimage->photonCount.nPhotC=dimage->photonCount.nPhotG=-1.0;     /*blank number*/
+  dimage->photonCount.reflDiff=0;      /*no reflectance difference*/
   dimage->photonCount.noise_mult=0.1;
   dimage->photonCount.rhoVrhoG=1.0;
   dimage->photonCount.writeHDF=0;  /*write ASCII by default*/
   dimage->photonCount.hdf=NULL;
   #endif
+  /*PCL*/
+  dimage->gediIO.pcl=0; /*full waveform rather thsn PCL*/
+  dimage->gediIO.pclPhoton=0;  
+  dimage->gediIO.writePcl=0;
   /*others*/
   rhoG=0.4;
   rhoC=0.57;
@@ -1649,8 +1686,8 @@ control *readCommands(int argc,char **argv)
         dimage->gediIO.inList=NULL;
         dimage->gediIO.nFiles=1;
         ASSIGN_CHECKNULL_RETNULL(dimage->gediIO.inList,chChalloc(dimage->gediIO.nFiles,"input name list",0));
-        ASSIGN_CHECKNULL_RETNULL(dimage->gediIO.inList[0],challoc((uint64_t)strlen(argv[++i])+1,"input name list",0));
-        strcpy(dimage->gediIO.inList[0],argv[i]);
+        ASSIGN_CHECKNULL_RETNULL(dimage->gediIO.inList[0],challoc((uint64_t)strlen(argv[++i])+10,"input name list",0));
+        strcpy(&(dimage->gediIO.inList[0][0]),argv[i]);
       }else if(!strncasecmp(argv[i],"-inList",7)){
         ISINTRETNULL(checkArguments(1,i,argc,"-inList"));
         TTIDY((void **)dimage->gediIO.inList,dimage->gediIO.nFiles);
@@ -1678,6 +1715,7 @@ control *readCommands(int argc,char **argv)
       }else if(!strncasecmp(argv[i],"-seed",5)){
         ISINTRETNULL(checkArguments(1,i,argc,"-seed"));
         srand2(atoi(argv[++i]));
+        for(j=rand2()%50;j>=0;j--)rand2();
       }else if(!strncasecmp(argv[i],"-meanN",5)){
         ISINTRETNULL(checkArguments(1,i,argc,"-meanN"));
         dimage->gediIO.den->meanN=atof(argv[++i]);
@@ -1721,6 +1759,9 @@ control *readCommands(int argc,char **argv)
         ISINTRETNULL(checkArguments(1,i,argc,"-pFile"));
         strcpy(dimage->gediIO.den->pNamen,argv[++i]);
         dimage->gediIO.den->deconGauss=0;
+        dimage->readPulse=1;
+        dimage->gediIO.readPulse=1;
+        strcpy(dimage->gediIO.pulseFile,dimage->gediIO.den->pNamen);
       }else if(!strncasecmp(argv[i],"-pSigma",7)){
         dimage->gediIO.den->pSigma=atof(argv[++i]);
       }else if(!strncasecmp(argv[i],"-gold",5)){
@@ -1728,6 +1769,9 @@ control *readCommands(int argc,char **argv)
       }else if(!strncasecmp(argv[i],"-deconTol",9)){
         ISINTRETNULL(checkArguments(1,i,argc,"-deconTol"));
         dimage->gediIO.den->deChang=atof(argv[++i]);
+      }else if(!strncasecmp(argv[i],"-deconIter",10)){
+        checkArguments(1,i,argc,"-deconIter");
+        dimage->gediIO.den->maxIter=atoi(argv[++i]);
       }else if(!strncasecmp(argv[i],"-preMatchF",10)){
         dimage->gediIO.den->preMatchF=1;
       }else if(!strncasecmp(argv[i],"-postMatchF",11)){
@@ -1845,8 +1889,14 @@ control *readCommands(int argc,char **argv)
       #ifdef USEPHOTON
       }else if(!strncasecmp(argv[i],"-photonCount",12)){
         dimage->ice2=1;
+      }else if(!strncasecmp(argv[i],"-photonPCL",10)){
+        dimage->gediIO.pclPhoton=1;        /*Pulse compression lidar with photon counting*/
       }else if(!strncasecmp(argv[i],"-pcl",4)){
-        dimage->pclPhoton=1;        /*Pulse compression lidar*/
+        dimage->gediIO.pcl=1;              /*Pulse compression lidar*/
+      }else if(!strncasecmp(argv[i],"-writePcl",4)){
+        dimage->gediIO.writePcl=1;
+      }else if(!strncasecmp(argv[i],"-shotNoise",4)){
+        dimage->noise.shotNoise=1;
       }else if(!strncasecmp(argv[i],"-nPhotons",9)){
         ISINTRETNULL(checkArguments(1,i,argc,"-nPhotons"));
         dimage->photonCount.designval=atof(argv[++i]);
@@ -1946,15 +1996,20 @@ void writeHelp()
   #ifdef USEPHOTON
   msgf("\nPhoton counting\n\
 -photonCount;     output point cloud from photon counting\n\
--pcl;             convert to photon counting pulse-compressed before processing\n\
 -nPhotons n;      mean number of photons\n\
--photonWind x;    window length for photon counting search, metres\n\
--noiseMult x;     noise multiplier for photon-counting\n\
+-photonWind x;    twice window length for photon counting search, metres (2 way distance)\n\
+-noiseMult x;     noise multiplier for photon-counting. Noise photon rate in micro Hz\n\
 -rhoVrhoG x;      ratio of canopy to ground reflectance at this wavelength. Not different from rhoV and rhoG\n\
 -nPhotC n;        mean number of canopy photons (replaces nPhotons and rhoVrhoG)\n\
 -nPhotG n;        mean number of ground photons (replaces nPhotons and rhoVrhoG)\n\
 -photHDF;         write photon-counting output in HDF5\n");
   #endif
+  msgf("\nUnfinished\n\
+-photonPCL;       convert to photon counting pulse-compressed before processing\n\
+-pcl;             pulse-compressed processing\n\
+-writePcl;        write out the intermediate PCL waves\n\
+-shotNoise;       apply shot noise\n\
+");
   msgf("\nDenoising:\n\
 -meanN n;         mean noise level, if using a predefined mean level\n\
 -thresh n;        noise threshold, if using a predefined noise threshold\n\
@@ -1962,7 +2017,7 @@ void writeHelp()
 -varScale x;      variable noise threshold scale (multiple of stdev above mean to set threshold)\n\
 -statsLen len;    length to calculate noise stats over for varNoise\n\
 -noiseTrack;      use noise tracking\n\
--sWidth sig;      smoothing width, after densoising\n\
+-sWidth sig;      smoothing width, after denoising\n\
 -psWidth sigma;   smoothing width, before denoising\n\
 -msWidth sig;     smoothing width, after noise stats, before denoising\n\
 -preMatchF;       matched filter before denoising\n\
@@ -1978,7 +2033,8 @@ void writeHelp()
 -rhoC rho;        canopy reflectance\n\
 -pSigma sig;      pulse width to smooth by if using Gaussian pulse\n\
 -gold;            deconvolve with Gold's method\n\
--deconTol;        deconvolution tolerance\n\
+-deconTol tol;    deconvolution tolerance\n\
+-deconIter n;     maximum number of deconvolution iterations\n\
 \nQuestions to svenhancock@gmail.com\n\n");
 
   return;

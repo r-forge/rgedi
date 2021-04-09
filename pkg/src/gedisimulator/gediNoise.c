@@ -57,8 +57,8 @@ int addNoise(dataStruct *data,noisePar *gNoise,float fSigma,float pSigma,float r
   int i=0;
   float noise=0;
   float tot=0.0,thresh=0;
+  float minE=0;
   float *tempNoise=NULL;
-  float GaussNoise();
   float *smooNoise=NULL,*tempWave=NULL;
   float *digitiseWave(float *,int,char,float,float);
   float reflScale=0;
@@ -81,8 +81,12 @@ int addNoise(dataStruct *data,noisePar *gNoise,float fSigma,float pSigma,float r
   }else if(gNoise->linkNoise){   /*link margin based noise*/
     /*Gaussian noise*/
     ASSIGN_CHECKNULL_RETINT(tempNoise,falloc((uint64_t)data->nBins,"temp noised",0));
+    /*in case of PCL, subtract min*/
+    minE=1000000.0;
+    for(i=0;i<data->nBins;i++)if(data->wave[data->useType][i]<minE)minE=data->wave[data->useType][i];
+    if(minE>0.0)minE=0.0;
     tot=0.0;
-    for(i=0;i<data->nBins;i++)tot+=data->wave[data->useType][i]*res;
+    for(i=0;i<data->nBins;i++)tot+=(data->wave[data->useType][i]-minE)*res;
     reflScale=(data->cov*rhoc+(1.0-data->cov)*rhog)*tot/(gNoise->linkCov*rhoc+(1.0-gNoise->linkCov)*rhog);
     for(i=0;i<data->nBins;i++)tempNoise[i]=gNoise->linkSig*GaussNoise()*reflScale;
     /*smooth noise by detector response*/

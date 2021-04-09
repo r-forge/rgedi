@@ -4,7 +4,7 @@
 #'
 #'@usage clipLevel2A(level2a, xmin, xmax, ymin, ymax, output)
 #'
-#'@param level2a A GEDI Level2A object (output of \code{\link[rGEDI:readLevel2A]{readLevel2A}} function).
+#'@param level2a A GEDI Level2A object (output of [readLevel2A()] function).
 #'An S4 object of class "gedi.level2a".
 #'@param xmin Numeric. West longitude (x) coordinate of the bounding rectangle, in decimal degrees.
 #'@param xmax Numeric. East longitude (x) coordinate of the bounding rectangle, in decimal degrees.
@@ -72,12 +72,12 @@ clipLevel2A = function(level2a, xmin, xmax, ymin, ymax, output=""){
 #'
 #'@usage clipLevel2AGeometry(level2a, polygon_spdf, output="", split_by=NULL)
 #'
-#'@param level2a A GEDI Level2A object (output of \code{\link[rGEDI:readLevel2A]{readLevel2A}} function).
+#'@param level2a A GEDI Level2A object (output of [readLevel2A()] function).
 #'An S4 object of class "gedi.level2a".
-#'@param polygon_spdf Polygon. An object of class \code{\link[sp]{SpatialPolygonsDataFrame-class}},
-#'which can be loaded as an ESRI shapefile using \code{\link[raster:shapefile]{raster::shapefile()}} function in the \emph{raster} package.
+#'@param polygon_spdf Polygon. An object of class [`sp::SpatialPolygonsDataFrame-class`],
+#'which can be loaded as an ESRI shapefile using [raster::shapefile()] function in the \emph{raster} package.
 #'@param output optional character path where to save the new h5file. Default "" (temporary file).
-#'@param split_by Polygon id. If defined, GEDI data will be clipped by each polygon using the attribute specified by \code{split_by} from the attribute table.
+#'@param split_by Polygon id. If defined, GEDI data will be clipped by each polygon using the attribute specified by `split_by` from the attribute table.
 #'
 #'@return Returns a list of S4 object of class "gedi.level2a" containing clipped GEDI Level2A data.
 #'
@@ -227,6 +227,7 @@ clipByMask2A = function(level2a, masks, output = "") {
 
       if (is.na(alg_id)) {
         mask = masks[[beam_id]][["main"]]
+        if (level2a@h5[[beam_id]]$exists("shot_number") == FALSE) next
         beam_shot_n = level2a@h5[[beam_id]][["shot_number"]]$dims
       } else {
         mask = masks[[beam_id]][[alg_id]]

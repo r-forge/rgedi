@@ -70,6 +70,7 @@ lvisLGWdata *readLVISlgw(char *namen,lvisLGWstruct *lvis)
 {
   uint64_t i=0,len=0;
   uint64_t offset=0;
+  uint16_t *swapUint16Arr(uint16_t *,int);
   float arg=0;
   lvisLGWdata *data=NULL;
   char *buffer=NULL;
@@ -172,7 +173,7 @@ lvisLGWdata *readLVISlgw(char *namen,lvisLGWstruct *lvis)
         errorf("error in rxwave allocation.\n");
         return(NULL);
       }
-      memcpy(&(data[i].rxwave4[0]),&(buffer[offset]),sizeof(unsigned char)*lvis->nBins);
+      memcpy(&(data[i].rxwave4[0]),&(buffer[offset]),sizeof(uint16_t)*lvis->nBins);
       offset+=(uint64_t)sizeof(uint16_t)*(uint64_t)lvis->nBins;
     }
 
@@ -194,11 +195,52 @@ lvisLGWdata *readLVISlgw(char *namen,lvisLGWstruct *lvis)
       arg=fabs(data[i].z0-data[i].z431)/(431.0*0.3);
       if(arg>0.0)data[i].zen=atan2(sqrt(1.0-arg*arg),arg)*180.0/M_PI;
     }
+    if(lvis->verMin==4){   /*v1.4 needs byte swapping*/
+      ASSIGN_CHECKNULL_RETNULL(data[i].rxwave4,swapUint16Arr(data[i].rxwave4,lvis->nBins));
+    }
   }
   TIDY(buffer);
 
   return(data);
 }/*readLVISlgw*/
+
+
+/*#####################################*/
+/*union for byte swapping*/
+
+typedef union{
+  char buff[sizeof(uint16_t)];
+  uint16_t x;
+}uint16Buff;  /*doubles*/
+
+
+/*#####################################*/
+/*byte swap a uint16_t array*/
+
+uint16_t *swapUint16Arr(uint16_t *jimlad,int numb)
+{
+  int i=0,j=0;
+  register int nBytes=sizeof(uint16_t);
+  uint16_t *swap=NULL;
+  uint16Buff ibuff,obuff;
+
+  /*allocate space*/
+  if(!(swap=(uint16_t *)calloc(numb,sizeof(uint16_t)))){
+    errorf("error in uint16 swap array allocation.\n");
+    return NULL;
+  }
+
+  /*loop over array*/
+  for(i=0;i<numb;i++){
+    ibuff.x=jimlad[i];
+    /*sewap the bytes*/
+    for(j=0;j<nBytes;j++)obuff.buff[j]=ibuff.buff[nBytes-1-j];
+    swap[i]=obuff.x;
+  }
+
+  TIDY(jimlad);
+  return(swap);
+}/*swapUint16Arr*/
 
 
 /*#####################################*/
@@ -560,6 +602,45 @@ char *read15dCharHDF5(hid_t file,char *label,int *nWaves,int *nBins)
 
 
 /*####################################*/
+/*read 1D uint8 array from HDF5*/
+
+uint8_t *read1dUint8HDF5(hid_t file,char *varName,int *nBins)
+{
+  int ndims=0;
+  hid_t dset,space,filetype;         /* Handles */
+  herr_t status;
+  hsize_t dims[1];
+  uint8_t *jimlad=NULL;
+
+  dset=H5Dopen2(file,varName,H5P_DEFAULT);
+  filetype=H5Dget_type(dset);
+  space=H5Dget_space(dset);
+  //if((filetype!=H5T_NATIVE_USHORT)&&(filetype!=H5T_STD_I16BE)&&(filetype!=H5T_STD_I16LE)){
+  //  errorf("Wrong data type\n");
+  //  exit(1);
+  //}
+  ndims=H5Sget_simple_extent_dims(space,dims,NULL);
+  if(ndims>1){
+    errorf("Wrong number of dimensions %d\n",ndims);
+    return NULL;
+  }
+  *nBins=dims[0];
+  if(!(jimlad=(uint8_t *)calloc(*nBins,sizeof(uint8_t)))){
+    errorf("error in float buffer allocation.\n");
+    return NULL;
+  }
+  status=H5Dread(dset,filetype,H5S_ALL,H5S_ALL,H5P_DEFAULT,jimlad);
+  if(status){
+    errorf("Data reading error %d\n",status);
+    return NULL;
+  }
+  status=H5Dclose(dset);
+  status=H5Sclose(space);
+  return(jimlad);
+}/*read1dUint8HDF5*/
+
+
+/*####################################*/
 /*read 1D uint16 array from HDF5*/
 
 uint16_t *read1dUint16HDF5(hid_t file,char *varName,int *nBins)
@@ -791,6 +872,298 @@ double *read1dDoubleHDF5(hid_t file,char *varName,int *nBins)
 
 
 /*####################################################*/
+/*write a 1D uint8 array*/
+
+int writeComp1dUint8HDF5(hid_t file,char *varName,uint8_t *data,int nWaves)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[1];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+  hsize_t chunk[1];
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dataspace=H5Screate_simple(1,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_UCHAR);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+  /*set compression*/
+  chunk[0]=nWaves;
+  dcpl_id=H5Pcreate (H5P_DATASET_CREATE);
+  status=H5Pset_deflate (dcpl_id, 9);
+  status=H5Pset_chunk(dcpl_id,1,chunk);
+
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*writeComp1dUint8HDF5*/
+
+
+/*####################################################*/
+/*write a 1D uint32 array*/
+
+int writeComp1dUint32HDF5(hid_t file,char *varName,uint32_t *data,int nWaves)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[1];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+  hsize_t chunk[1];
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dataspace=H5Screate_simple(1,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_UINT);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+  /*set compression*/
+  chunk[0]=nWaves;
+  dcpl_id=H5Pcreate (H5P_DATASET_CREATE);
+  status=H5Pset_deflate (dcpl_id, 9);
+  status=H5Pset_chunk(dcpl_id,1,chunk);
+
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*writeComp1dUint32HDF5*/
+
+
+/*####################################################*/
+/*write a 1D uint32 array*/
+
+int writeComp1dInt8HDF5(hid_t file,char *varName,int8_t *data,int nWaves)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[1];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+  hsize_t chunk[1];
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dataspace=H5Screate_simple(1,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_CHAR);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+  /*set compression*/
+  chunk[0]=nWaves;
+  dcpl_id=H5Pcreate (H5P_DATASET_CREATE);
+  status=H5Pset_deflate (dcpl_id, 9);
+  status=H5Pset_chunk(dcpl_id,1,chunk);
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*writeComp1dInt8HDF5*/
+
+
+/*####################################################*/
+/*write a 1D uint32 array*/
+
+int writeComp1dInt32HDF5(hid_t file,char *varName,int32_t *data,int nWaves)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[1];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+  hsize_t chunk[1];
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dataspace=H5Screate_simple(1,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_INT);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+  /*set compression*/
+  chunk[0]=nWaves;
+  dcpl_id=H5Pcreate (H5P_DATASET_CREATE);
+  status=H5Pset_deflate (dcpl_id, 9);
+  status=H5Pset_chunk(dcpl_id,1,chunk);
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*writeComp1dInt32HDF5*/
+
+
+/*####################################################*/
+/*write a 1D uint64 array*/
+
+int writeComp1dUint64HDF5(hid_t file,char *varName,uint64_t *data,int nWaves)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[1];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+  hsize_t chunk[1];
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dataspace=H5Screate_simple(1,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_ULONG);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+  /*set compression*/
+  chunk[0]=nWaves;
+  dcpl_id=H5Pcreate (H5P_DATASET_CREATE);
+  status=H5Pset_deflate (dcpl_id, 9);
+  status=H5Pset_chunk(dcpl_id,1,chunk);
+
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*writeComp1dUint64HDF5*/
+
+
+/*####################################################*/
+/*write a 1D uint16 array*/
+
+int writeComp1dUint16HDF5(hid_t file,char *varName,uint16_t *data,int nWaves)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[1];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+  hsize_t chunk[1];
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dataspace=H5Screate_simple(1,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_USHORT);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+  /*set compression*/
+  chunk[0]=nWaves;
+  dcpl_id=H5Pcreate (H5P_DATASET_CREATE);
+  status=H5Pset_deflate (dcpl_id, 9);
+  status=H5Pset_chunk(dcpl_id,1,chunk);
+
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*writeComp1dUint16HDF5*/
+
+
+/*####################################################*/
 /*write a 1D uint32 array*/
 
 int write1dUint32HDF5(hid_t file,char *varName,uint32_t *data,int nWaves)
@@ -833,7 +1206,7 @@ int write1dUint32HDF5(hid_t file,char *varName,uint32_t *data,int nWaves)
 
 
 /*####################################################*/
-/*write a 1D float array*/
+/*write a 1D double array*/
 
 int write1dDoubleHDF5(hid_t file,char *varName,double *data,int nWaves)
 {
@@ -1009,6 +1382,56 @@ int write2dFloatHDF5(hid_t file,char *varName,float *data,int nWaves,int nBins)
 
 
 /*####################################################*/
+/*write a compressed 2D int8 array*/
+
+int writeComp2dInt8HDF5(hid_t file,char *varName,int8_t *data,int nWaves,int nBins)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[2];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+  hsize_t chunk[2];
+
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dims[1]=(hsize_t)nBins;
+  dataspace=H5Screate_simple(2,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_CHAR);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+  /*set compression*/
+  chunk[0]=nWaves;
+  chunk[1]=nBins;
+  dcpl_id=H5Pcreate (H5P_DATASET_CREATE);
+  status=H5Pset_deflate (dcpl_id, 9);
+  status=H5Pset_chunk(dcpl_id,2,chunk);
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*writeComp2dInt8HDF5*/
+
+
+/*####################################################*/
 /*write a compressed 2D float array*/
 
 int writeComp2dFloatHDF5(hid_t file,char *varName,float *data,int nWaves,int nBins)
@@ -1151,7 +1574,56 @@ int writeComp1dFloatHDF5(hid_t file,char *varName,float *data,int nWaves)
 
 
 /*####################################################*/
-/*write a 1D float array*/
+/*write a compressed 1D float array*/
+
+int writeComp1dDoubleHDF5(hid_t file,char *varName,double *data,int nWaves)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[1];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+  hsize_t chunk[1];
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dataspace=H5Screate_simple(1,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_DOUBLE);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+  /*set compression*/
+  chunk[0]=nWaves;
+  dcpl_id=H5Pcreate (H5P_DATASET_CREATE);
+  status=H5Pset_deflate (dcpl_id, 9);
+  status=H5Pset_chunk(dcpl_id,1,chunk);
+
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*writeComp1dDoubleHDF5*/
+
+
+/*####################################################*/
+/*write a 1D int array*/
 
 int write1dIntHDF5(hid_t file,char *varName,int *data,int nWaves)
 {
@@ -1191,6 +1663,50 @@ int write1dIntHDF5(hid_t file,char *varName,int *data,int nWaves)
   status=H5Sclose(dataspace);
   return(0);
 }/*write1dIntHDF5*/
+
+
+/*####################################################*/
+/*write a 1D int array*/
+
+int write1dInt64HDF5(hid_t file,char *varName,int64_t *data,int nWaves)
+{
+  hid_t dset;
+  herr_t status;
+  hsize_t dims[1];
+  hid_t datatype,dataspace;  /*data definitions*/
+  hid_t lcpl_id,dcpl_id,dapl_id;     /*creation and access properties*/
+
+
+  /*define dataspace*/
+  dims[0]=(hsize_t)nWaves;
+  dataspace=H5Screate_simple(1,dims,NULL);
+  datatype=H5Tcopy(H5T_NATIVE_LONG);
+  /*access and creation properties*/
+  lcpl_id=H5Pcopy(H5P_DEFAULT);
+  dcpl_id=H5Pcopy(H5P_DEFAULT);
+  dapl_id=H5Pcopy(H5P_DEFAULT);
+
+
+  /*create new dataset*/
+  dset=H5Dcreate2(file,varName,datatype,dataspace,lcpl_id,dcpl_id,dapl_id);
+  if(dset<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*write data*/
+  status=H5Dwrite(dset,datatype,H5S_ALL,H5S_ALL,H5P_DEFAULT,(void *)data);
+  if(status<0){
+    errorf("Error writing %s\n",varName);
+    return -1;
+  }
+
+  /*close data*/
+  status=H5Dclose(dset);
+  status=H5Sclose(dataspace);
+  return 0;
+}/*write1dInt64HDF5*/
+
 
 /*the end*/
 /*####################################################*/

@@ -4,10 +4,10 @@
 #'
 #'@usage getLevel2BPAVDProfile(level2b)
 #'
-#'@param level2b A GEDI Level2B object (output of \code{\link[rGEDI:readLevel2B]{readLevel2B}} function).
+#'@param level2b A GEDI Level2B object (output of [readLevel2B()] function).
 #'An S4 object of class "gedi.level2b".
 #'
-#'@return Returns an S4 object of class \code{\link[data.table:data.table]{data.table-class}}
+#'@return Returns an S4 object of class [data.table::data.table]
 #'containing the Plant Area Volume Density Index.
 #'
 #'@seealso https://lpdaac.usgs.gov/products/gedi02_bv001/
@@ -73,7 +73,7 @@ getLevel2BPAVDProfile<-function(level2b){
       height_lastbin=level2b_i[["geolocation/height_lastbin"]][],
       height_bin0=level2b_i[["geolocation/height_bin0"]][],
       pavd_z=t(level2b_i[["pavd_z"]][,1:level2b_i[["pavd_z"]]$dims[2]]))
-    m.dt<-rbind(m.dt,m)
+    m.dt<-data.table::rbindlist(list(m.dt,m))
   }
   colnames(m.dt)<-c("beam","shot_number","algorithmrun_flag",
                     "l2b_quality_flag","delta_time","lat_lowestmode",

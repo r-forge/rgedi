@@ -29,6 +29,10 @@ float frand() {
     return((float)rand()/max);
 }
 
+int rand2() {
+    return rand();
+}
+
 void srand2(int seed) {
     srand(seed);
 }

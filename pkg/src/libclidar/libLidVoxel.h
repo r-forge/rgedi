@@ -45,6 +45,7 @@ typedef struct{
   float **sumRsq;    /*sum of radius squared, for point area*/
   float **meanRefl;  /*mean reflectances from all returns*/
   float **meanZen;   /*mean zenith angle of all beams intersecting*/
+  float **meanRange; /*mean range of all beams intersecting*/
   float *rmse;       /*rmse of signal going in*/
   int *contN;        /*for normalising ALS*/
   int nVox;          /*total number of voxels*/
@@ -162,6 +163,7 @@ typedef struct{
   uint32_t nBeams;   /*number of beams in this scan*/
   uint32_t nPoints;  /*number of points in this scan*/
   FILE *ipoo;        /*file pointer*/
+  hid_t hdfFile;     /*HDF5 file pointer*/
   uint32_t pOffset;  /*current point position for buffering*/
   uint32_t nRead;    /*number of beams to read at once*/
   uint32_t maxRead;  /*maximum number of beams we could have in a region*/
@@ -196,6 +198,14 @@ void rotateX(double *,double);
 void rotateZ(double *,double);
 int readBoundsFromTLS(double *,char **,int);
 void beamVoxelBounds(double *,float *,float,char,double *);
+void makeBinImage(double *,float *,float *,char *,int,float,double,uint16_t,float,int,int,float,lidVoxPar *);
+int readCanBounds(canBstruct *,char *,double *);
+void setCanInd(int *,int *,double,double,double,lasFile *,canBstruct *);
+void imposeCanBound(float *,int,int,int);
+double setCanGround(double,double,canBstruct *);
+int setTopVoxBlank(voxStruct *);
+void voxelate(voxStruct *,float *,lasFile *,double,double,double,float);
+int writeAsciiVox(voxStruct *,char *);
 
 /*the end*/
 /*###################################################*/
