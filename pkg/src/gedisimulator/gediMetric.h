@@ -34,14 +34,11 @@
 #ifdef USEPHOTON
 #include "photonCount.h"
 #endif
-
 #include "gediNoise.h"
 #include <libLasProcess.h>
 
 float *findLAIprofile(float *,float,int,float,int *,double,float,double *,float);
 char checkUsable(float *,int);
-void setDenoiseDefault(denPar *);
-int readPulse(denPar *);
 
 /*###########################################################*/
 /*LVIS level2 data*/
@@ -92,6 +89,7 @@ typedef struct{
   char useBounds;    /*when we will process only a subset of bounds*/
   char writeGauss;   /*write Gaussian parameters*/
   char noCanopy;     /*output the FHD and LAI profile switch*/
+  char readPulse;    /*read pulse from an ASCII file*/
   float laiRes;      /*LAI profile resolution*/
   float maxLAIh;     /*maximum height bin of LAI profile. Put all above this in top bin*/
 
@@ -114,7 +112,6 @@ typedef struct{
   /*photon counting*/
   char ice2;         /*ICESat-2 mode. GEDI by default*/
   photonStruct photonCount;  /*photon counting structure*/
-  char pclPhoton;    /*use PCL photon counting*/
 
   /*others*/
   float rhoRatio; /*ration of canopy to ground reflectance*/
@@ -156,6 +153,7 @@ typedef struct{
   //float *LmomMax;   /*L-moments from maximum*/
   float cov;        /*canopy cover for gaussian fitting*/
   double gHeight;   /*ground height from Gaussians*/
+  float gSlope;     /*slope estimate from Gaussian fitting*/
   double maxGround; /*ground height from maximum*/
   double inflGround;/*ground height from inflection*/
   double tElev;     /*top elevation*/
@@ -181,4 +179,5 @@ typedef struct{
   bGround *bGr;     /*Bayesian ground structure*/
   double bayGround; /*Bayesian ground elevation*/
 }metStruct;
+
 #endif /* _22E2D91D_B134_3B0A_133E_DE2D88E57819 */

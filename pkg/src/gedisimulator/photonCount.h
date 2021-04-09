@@ -1,5 +1,5 @@
-#ifndef _88E48188_7134_3B0B_122D_3FADF51CD571
-#define _88E48188_7134_3B0B_122D_3FADF51CD571
+
+
 /*##############################*/
 /*# Generates photon count from#*/
 /*# simulated GEDI waveforms   #*/
@@ -31,6 +31,8 @@
 /*#    along with gediRat.  If not, see <http://www.gnu.org/licenses/>.  #*/
 /*########################################################################*/
 
+#ifndef _88E48188_7134_3B0B_122D_3FADF51CD571
+#define _88E48188_7134_3B0B_122D_3FADF51CD571
 #include "gediNoise.h"
 
 /*###########################################################*/
@@ -55,6 +57,7 @@ typedef struct{
   float rhoVrhoG;      /*ratio of canopy to ground reflectance for weighting*/
   float nPhotC;        /*mean number of canopy photons per footprint*/
   float nPhotG;        /*mean number of ground photons per footprint*/
+  char reflDiff;       /*are we accounting for a difference in reflectance?*/
   /*noise*/
   float noise_mult;    /*noise scaling factor*/
   float H;             /*search window length, metres*/
@@ -72,10 +75,12 @@ typedef struct{
 
 void setPhotonRates(photonStruct *);
 float *uncompressPhotons(float *,dataStruct *,photonStruct *,noisePar *,gediIOstruct *);
-float **countPhotons(float *,dataStruct *,photonStruct *,int *,denPar *,noisePar *);
+float **countPhotons(float *,dataStruct *,photonStruct *,int *,denPar *,noisePar *,char);
 float *countWaveform(float *,dataStruct *,photonStruct *,denPar *,noisePar *);
+float pickArrayElement(float,float *,int,char);
+void removeAsymmetryPCL(float *,int);
+int setPhotonProb(photonStruct *);
 
 /*###########################################################*/
-
 
 #endif /* _88E48188_7134_3B0B_122D_3FADF51CD571 */

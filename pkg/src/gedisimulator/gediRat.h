@@ -24,6 +24,7 @@ typedef struct
 
   /*HDF5 output*/
   char writeHDF; /*write output as hdf5*/
+  char writeL1B; /*write L1B HDF5 output format*/
   int maxBins;   /*bins per wave for HDF5 output*/
   int hdfCount;  /*count used footprints*/
 } control;

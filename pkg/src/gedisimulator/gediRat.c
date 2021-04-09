@@ -8,8 +8,8 @@
 #include "hdf5.h"
 #include "libLasRead.h"
 #include "libDEMhandle.h"
-#include "libLidVoxel.h"
 #include "libLasProcess.h"
+#include "libLidVoxel.h"
 #include "libLidarHDF.h"
 #include "libOctree.h"
 #include "gediIO.h"
@@ -164,7 +164,8 @@ int main(int argc,char **argv)
     /*write HDF if needed and not blank*/
     if(dimage->writeHDF&&(dimage->hdfCount>0)){
       hdfData->nWaves=dimage->hdfCount;  /*account for unusable footprints*/
-      ISINTRETONE(writeGEDIhdf(hdfData,dimage->outNamen,&(dimage->gediIO)));
+      if(dimage->writeL1B) { ISINTRETINT(writeGEDIl1b(hdfData,dimage->outNamen,&(dimage->gediIO))); }
+      else                 { ISINTRETINT(writeGEDIhdf(hdfData,dimage->outNamen,&(dimage->gediIO))); }
     }
   }/*make and write a waveform if needed*/
 
@@ -428,7 +429,7 @@ int writeGEDIwave(control *dimage,waveStruct *waves,int numb)
 
     fprintf(opoo,"%f",r);
     for(j=0;j<dimage->gediIO.nTypeWaves;j++){
-      fprintf(opoo," %f",waves->wave[j][i]);
+      fprintf(opoo," %.10f",waves->wave[j][i]);
        if(dimage->gediIO.ground&&(j<3))fprintf(opoo," %f %f",waves->canopy[j][i],waves->ground[j][i]);
     }
     fprintf(opoo,"\n");
@@ -528,10 +529,11 @@ control *readCommands(int argc,char **argv)
   dimage->gediIO.pFWHM=15.0;   /*12 ns FWHM*/
   dimage->gediIO.fSigma=5.5;  /*86% of energy within a diameter of 20-25m*/
   dimage->gediIO.res=0.15;
-  dimage->gediIO.pRes=0.01;
+  dimage->gediIO.pRes=dimage->gediIO.res/4.0;
   dimage->gediRat.coord[0]=624366.0;
   dimage->gediRat.coord[1]=3.69810*pow(10.0,6.0);
   dimage->gediRat.decon=NULL;
+  dimage->gediIO.aEPSG=4326;      /*default is not to reproject*/
 
   /*switches*/
   dimage->gediRat.readWave=0;
@@ -556,9 +558,11 @@ control *readCommands(int argc,char **argv)
   dimage->overWrite=1;          /*over write any files with the same name if they exist*/
   dimage->gediRat.readALSonce=0;/*read each footprint separately*/
   dimage->writeHDF=0;           /*write output as ascii*/
+  dimage->writeL1B=0;           /*write output as ascii*/
   dimage->gediRat.defWfront=0;  /*Gaussian footprint*/
   dimage->gediRat.wavefront=NULL;
   dimage->gediIO.pcl=0;         /*do not use PCL*/
+  dimage->gediIO.pclPhoton=0;         /*do not use PCL*/
 
   /*beams*/
   dimage->gediIO.useCount=dimage->gediIO.useFrac=dimage->gediIO.useInt=1;
@@ -691,6 +695,9 @@ control *readCommands(int argc,char **argv)
         strcpy(dimage->gediRat.coordList,argv[++i]);
       }else if(!strncasecmp(argv[i],"-hdf",4)){
         dimage->writeHDF=1;
+      }else if(!strncasecmp(argv[i],"-l1b",4)){
+        dimage->writeHDF=1;
+        dimage->writeL1B=1;
       }else if(!strncasecmp(argv[i],"-ascii",6)){
         dimage->writeHDF=0;
       }else if(!strncasecmp(argv[i],"-maxBins",8)){
@@ -720,6 +727,9 @@ control *readCommands(int argc,char **argv)
         dimage->gediRat.decimate=atof(argv[++i]);
       }else if(!strncasecmp(argv[i],"-pcl",4)){
         dimage->gediIO.pcl=1;
+      }else if(!strncasecmp(argv[i],"-aEPSG",6)){
+        checkArguments(1,i,argc,"-aEPSG");
+        dimage->gediIO.aEPSG=atoi(argv[++i]);;
       }else if(!strncasecmp(argv[i],"-help",5)){
         writeGediRatHelpMessage();
         return(NULL);
@@ -733,6 +743,9 @@ control *readCommands(int argc,char **argv)
 
   /*total number of beams*/
   dimage->gediIO.nTypeWaves=dimage->gediIO.useCount+dimage->gediIO.useFrac+dimage->gediIO.useInt;
+
+  /*ensure pulse is Nyquist sampled*/
+  if(dimage->gediIO.readPulse==0)dimage->gediIO.pRes=dimage->gediIO.res/4.0;
 
   return(dimage);
 }/*readCommands*/
@@ -749,6 +762,8 @@ void writeGediRatHelpMessage()
 -output name;    output filename\n\
 -ground;         record separate ground and canopy waveforms\n\
 -hdf;            write output as HDF5. Best with gridded or list of coords\n\
+-l1b;            write output in the GEDI L1B HDF5 format. Best with gridded or list of coords\n\
+-aEPSG epsg;     input EPSG code if the L1B output needs to be in degrees\n\
 -ascii;          write output as ASCII (default). Good for quick tests\n\
 -waveID id;      supply a waveID to pass to the output (only for single footprints)\n\
 \n# Single footprint, list of footprints, or grid of footprints\n\
@@ -756,7 +771,7 @@ void writeGediRatHelpMessage()
 -listCoord name; list of coordinates\n\
 -gridBound minX maxX minY maxY;     make a grid of waveforms in this box\n\
 -gridStep res;   grid step size\n\
-\n# Lidar characteristics. Defaults are expected GEDI values.\
+\n# Lidar characteristics. Defaults are expected GEDI values.\n\
 -pSigma sig;     set Gaussian pulse width as 1 sigma\n\
 -pFWHM fhwm;     set Gaussian pulse width as FWHM in ns\n\
 -readPulse file; read pulse shape and width from a file insteda of making Gaussian\n\

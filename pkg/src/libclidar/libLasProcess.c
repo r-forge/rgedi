@@ -1,14 +1,14 @@
-#include "stdio.h"
-#include "stdlib.h"
-#include "string.h"
-#include "math.h"
-#include "inttypes.h"
-#include "tools.h"
-#include "functionWrappers.h"
-#include "float.h"
-#include "gsl/gsl_errno.h"
-#include "gsl/gsl_fft_complex.h"
-#include "mpfit.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <inttypes.h>
+#include <tools.h>
+#include <functionWrappers.h>
+#include <float.h>
+#include <gsl/gsl_errno.h>
+#include <gsl/gsl_fft_complex.h>
+#include <mpfit.h>
 #include "libLasRead.h"
 #include "libLasProcess.h"
 
@@ -181,9 +181,20 @@ float *processFloWave(float *wave,int waveLen,denPar *decon,float gbic)
   if((gbic>0.0)&&(gbic!=1.0))for(i=0;i<waveLen;i++)smoothed[i]/=gbic;
 
 
+
+  /*deconvolve if required*/
+  if((decon->deconMeth>=0)&&(hardTarget==0)){
+    processed=deconvolve(smoothed,waveLen,decon->pulse,decon->pBins,\
+                  decon->res,decon->maxIter,decon->deChang,decon->deconMeth);
+    TIDY(smoothed);
+  }else{
+    processed=smoothed;    /*otherwise just use the denoised array*/
+    smoothed=NULL;
+  }
+
   /*Gaussian fitting*/
   if(decon->fitGauss||decon->gaussFilt){
-    ASSIGN_CHECKNULL_RETNULL(gaussWave,fitGaussians(smoothed,waveLen,decon));
+    ASSIGN_CHECKNULL_RETNULL(gaussWave,fitGaussians(processed,waveLen,decon));
     /*test for hard target*/
     if(decon->gaussFilt){
       if((decon->nGauss==1)&&(decon->gPar[2]<=decon->hardWidth))hardTarget=1;
@@ -193,32 +204,22 @@ float *processFloWave(float *wave,int waveLen,denPar *decon,float gbic)
     /*copy Gaussian if to be used*/
     if(hardTarget){ /*single hit*/
       TIDY(gaussWave);
-      TIDY(smoothed);
+      TIDY(processed);
       ASSIGN_CHECKNULL_RETNULL(gaussWave,hardHitWave(decon,waveLen));
     }else if(decon->fitGauss){ /*pass on Gaussian waveform*/
-      TIDY(smoothed);
+      TIDY(processed);
     }else{                /*delete fitting and pass original*/
       TIDY(gaussWave);
-      gaussWave=smoothed;
-      smoothed=NULL;
+      gaussWave=processed;
+      processed=NULL;
     }
   }else{   /*don't fit Gaussians*/
-    gaussWave=smoothed;
-    smoothed=NULL;
+    gaussWave=processed;
+    processed=NULL;
     hardTarget=0;
   }
 
-  /*deconvolve if required*/
-  if((decon->deconMeth>=0)&&(hardTarget==0)){
-    ASSIGN_CHECKNULL_RETNULL(processed,deconvolve(gaussWave,waveLen,decon->pulse,decon->pBins,\
-                  decon->res,decon->maxIter,decon->deChang,decon->deconMeth));
-    TIDY(gaussWave);
-  }else{
-    processed=gaussWave;    /*otherwise just use the denoised array*/
-    gaussWave=NULL;
-  }
-
-  return(processed);
+  return(gaussWave);
 }/*processFloWave*/
 
 
@@ -1754,14 +1755,14 @@ float *findRH(float *wave,double *z,int nBins,double gHeight,float rhRes,int *nR
   float cumul=0;
   float totE=0,r=0;
   float *rh=NULL;
-  float tolerance=0;
   float lastRet=0;
   char *done=NULL;
 
   /*total energy*/
   totE=0.0;
-  for(i=0;i<nBins;i++)if(wave[i]>tolerance)totE+=wave[i];
+  for(i=0;i<nBins;i++)totE+=wave[i];
 
+  /*allocate space*/
   *nRH=(int)(100.0/rhRes+1);
   ASSIGN_CHECKNULL_RETNULL(rh,falloc((uint64_t)(*nRH),"rh metrics",0));
   ASSIGN_CHECKNULL_RETNULL(done,challoc((uint64_t)(*nRH),"RH done flag",0));
@@ -1770,18 +1771,16 @@ float *findRH(float *wave,double *z,int nBins,double gHeight,float rhRes,int *nR
     rh[i]=-9999.0;
   }
 
-  /*make toelrance have the RH metric step*/
-  tolerance=totE*rhRes/(100.0*3000.0);  /*0.00000000000001*totE;*/
-
+  /*which way is the waveform arranged?*/
   cumul=0.0;
   if(z[nBins-i]<z[0]){   /*wave is from from top to bottom*/
     for(i=nBins-1;i>=0;i--){
       cumul+=wave[i];
-      if(wave[i]>tolerance){
+      if(wave[i]>0.0){
         for(j=0;j<(*nRH);j++){
           r=((float)j*(float)(rhRes/100.0))*totE;
           if(r>totE)r=totE;
-          if((done[j]==0)&&(cumul>=(r-tolerance))){
+          if((done[j]==0)&&(cumul>=r)){
             rh[j]=(float)(z[i]-gHeight);
             done[j]=1;
           }
@@ -1792,11 +1791,11 @@ float *findRH(float *wave,double *z,int nBins,double gHeight,float rhRes,int *nR
   }else{
     for(i=0;i<nBins;i++){  /*wave is from bottom to top*/
       cumul+=wave[i];
-      if(wave[i]>tolerance){
+      if(wave[i]>0.0){
         for(j=0;j<(*nRH);j++){
           r=((float)j*(float)(rhRes/100.0))*totE;
           if(r>totE)r=totE;
-          if((done[j]==0)&&(cumul>=(r-tolerance))){
+          if((done[j]==0)&&(cumul>=r)){
             rh[j]=(float)(z[i]-gHeight);
             done[j]=1;
           }

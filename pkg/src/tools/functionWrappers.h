@@ -7,6 +7,7 @@
 int msgf(const char*, ...);
 int errorf(const char*, ...);
 float frand();
+int rand2();
 void srand2(int);
 
 #endif /* HANCOCK_MSGHANDLING_H */

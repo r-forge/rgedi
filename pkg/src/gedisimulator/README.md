@@ -18,7 +18,7 @@ The programs are:
 
 **lasPoints**: outputs .pts files from .las files for selected areas.
 
-**lvisBullseye**: collocates GEDI or LVIS to ALS data, following Blair and Hofton (1999).
+**collocateWaves**: collocates GEDI or LVIS to ALS data, following [Blair and Hofton (1999)](https://agupubs.onlinelibrary.wiley.com/doi/abs/10.1029/1999GL010484).
 
 **addNoiseHDF**: Reads waveform data from HDF5 files and adds noise of a chosen level.
 
@@ -261,6 +261,7 @@ Note that some metrics are "true" and will not be available to GEDI. They are in
 
 ##### Metrics available to GEDI
     gHeight - ground elevation (m) from Gaussian fitting
+    gSlope - ground slope (degrees) from Gaussian fitting
     maxGround - ground elevation (m) from lowest maximum
     inflGround - ground elevation (m) from inflection points.
     signal top - elevation of first point above noise (may include noise tracking).
@@ -290,7 +291,7 @@ Note that some metrics are "true" and will not be available to GEDI. They are in
 ##### Metrics unavailable to GEDI
     wave ID - waveform label, relates to plot name and footprint number.
     true ground - ground elevation (m) from ALS. Centre of gravity of ground points within footprint
-    true top - elevation of highest point of waveform (m), without noise. Includes pulse blurring.
+    true top - elevation of highest point of waveform (m), RH99.9, without noise. Includes pulse blurring.
     ground slope - effective ground slope (degrees), from width of ground return. Includes roughness.
     ALS cover - canopy cover (fraction) from ALS data. Uses rho_v=0.57 and rho_g=0.4.
     rhReal 0-100 - RH metrics, 0%-100%, using "true" ground from ALS data (m).
@@ -339,7 +340,7 @@ Lefsky, Michael A., Michael Keller, Yong Pang, Plinio B. De Camargo, and Maria O
 
 
 
-## lvisBullseye ##
+## collocateWaves ##
 
 Uses the correlation method in Blair and Hofton (1999) to colocate a large-footprint lidar dataset with a small-footprint, discrete-return dataset. It uses the Pearson correlation to find the best affine transformation (x and y only, or x, y and z) and footprint size needed to align a large-footprint dataset with a small-footprint dataset. It has three potential modes of operation.
 
@@ -404,8 +405,10 @@ If the full grid is used, it outputs an ASCII file with the correlation for each
     -minDense x;      minimum ALS beam density to accept
     -decimate f;      decimate ALS point cloud by a factor, to save RAM
     -noFilt;          don't filter outliers from correlation (default)
-    -filtOut;         filter outliers from correlation stats
+    -filtOut s;       filter outliers from correlation stats along with an optional sigma
     -smooth sig;      smooth both waves before comparing
+    -checkCov;        check ALS coverage and remove any with footprints with less than 2/3 coverage
+    -median;          use the median correlation when optimising, rather than the mean (default)
 
 #### GEDI beam selection
     -beamList 11111111; 0/1 for whether or not to use beams 1-8 on GEDI
@@ -423,6 +426,10 @@ If the full grid is used, it outputs an ASCII file with the correlation for each
     -octLevels n;    number of octree levels to use
     -nOctPix n;      number of octree pixels along a side for the top level
 
+
+## plotWaveComparison.py ##
+
+Plots waveforms to compare ALS derived simulations to real GEDI data. It is meant to take the output from collocateWaves' -writeWaves option and compare to the original GEDI data. If the collocation has been successful, the two will match.
 
 ## mapLidar ##
 Generates a geotiff from las file properties, combining multiple files. Can also print a list of file bounds or calculate beam and point density.

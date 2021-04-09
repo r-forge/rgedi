@@ -815,16 +815,22 @@ void TTIDY(void **jimlad,int length)
 float singleMedian(float *jimlad,int numb)
 {
   float median=0;
+  float *temp=NULL;
   int compFloat(const void *x,const void *y);  /*function needed by qsort()*/
 
-  qsort(jimlad,numb,sizeof(float),compFloat);  /*put the contents of temp in order*/
+  /*allocate space*/
+  temp=falloc(numb,"median temporary",0);
+  memcpy(temp,jimlad,numb*sizeof(float));
+
+  qsort(temp,numb,sizeof(float),compFloat);  /*put the contents of temp in order*/
   if(numb>0){
-    median=jimlad[(int)(numb/2)];
+    median=temp[(int)(numb/2)];
   }else{
     errorf("No data points for median?\n");
     return(-FLT_MAX);
   }
 
+  TIDY(temp);
   return(median);
 }/*singleMedian*/
 

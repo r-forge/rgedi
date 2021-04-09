@@ -53,6 +53,8 @@ typedef struct{
   float offset;   /*waveform DN offset*/
   char bitRate;   /*digitiser bit rate*/
   float maxDN;    /*maximum DN we need to digitise*/
+  /*shot noise*/
+  char shotNoise; /*shot noise flag*/
   /*renoising already noised data*/
   float newPsig;   /*new pulse sigma*/
   /*others*/
@@ -68,6 +70,7 @@ typedef struct{
 
 int addNoise(dataStruct *,noisePar *,float,float,float,float,float);
 float setNoiseSigma(float,float,float,float,float,float);
+float GaussNoise();
 
 /*the end*/
 /*#######################################*/

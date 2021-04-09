@@ -45,6 +45,11 @@ typedef struct{
   int centBin;  /*peak bin*/
   float *y;
   float *x;
+
+  /*resampled pulse, for PCL*/
+  float *resamp;  /*resampled pulse for speed*/
+  int rBins;      /*number of resampled bins*/
+  int rCent;      /*resampled centre*/
 }pulseStruct;
 
 
@@ -131,6 +136,7 @@ typedef struct{
   /*input files*/
   int nFiles;   /*number of waveforms*/
   char **inList;
+  int aEPSG;    /*ALS EPSG for if the output needs to be in degrees*/
 
   /*switches*/
   char ground;      /*read separateground wave or not*/
@@ -155,10 +161,9 @@ typedef struct{
 
   /*system pulse*/
   char readPulse;      /*read pulse to simulate with*/
-  char pulseFile[200];
+  char pulseFile[400];
   pulseStruct *pulse;
   float pRes;
-  char pcl;            /*use PCL (do not pad return)*/
 
   /*number of waves to simulate*/
   int nTypeWaves;    /*number of waves simulated*/
@@ -170,6 +175,11 @@ typedef struct{
   double bounds[4]; /*minX minY, maxX maxY*/
   int bEPSG;        /*epsg of bounds*/
   int wEPSG;        /*epsg of waveform data*/
+
+  /*pcl*/
+  char pcl;          /*use PCL full-waveform*/
+  char pclPhoton;    /*use PCL photon counting*/
+  char writePcl;     /*write PCL intermediate waves*/
 
   /*others*/
   int nMessages;  /*number of progress messages*/
@@ -322,6 +332,18 @@ typedef struct{
 
 
 /*###########################################################*/
+/*structure to hold pulse for TX L1B format*/
+
+typedef struct{
+  uint16_t *txCount;   /*tx_sample_count*/
+  uint64_t *txStart;   /*tx_sample_start_index*/
+  float *txwave;       /*txwaveform*/
+  uint16_t nBins;      /*number of bins for the pulse*/
+  float maxAmp;        /*maximum amplitude*/
+}TXstruct;
+
+
+/*###########################################################*/
 /*functions*/
 
 dataStruct **tidyAsciiStruct(dataStruct **,int);
@@ -338,6 +360,7 @@ waveStruct *makeGediWaves(gediRatStruct *,gediIOstruct *,pCloudStruct **);
 int setGediGrid(gediIOstruct *,gediRatStruct *);
 int setGediPulse(gediIOstruct *,gediRatStruct *);
 int writeGEDIhdf(gediHDF *,char *,gediIOstruct *);
+int writeGEDIl1b(gediHDF *,char *,gediIOstruct *);
 int setGediFootprint(gediRatStruct *,gediIOstruct *);
 void updateGediCoord(gediRatStruct *,int,int);
 int packGEDIhdf(waveStruct *,gediHDF *,int,gediIOstruct *,gediRatStruct *,int *,char,char *);

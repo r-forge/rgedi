@@ -1,7 +1,7 @@
 Package: rGEDI
 Type: Package
 Title: NASA's Global Ecosystem Dynamics Investigation (GEDI) Data Visualization and Processing
-Version: 0.1.13
+Version: 0.1.13.9000
 Authors@R: c(
     person("Carlos Alberto", "Silva", email = "carlos_engflorestal@outlook.com", role = c("aut", "cre", "cph")),
     person("Caio", "Hamamura", email = "caiohamamura@gmail.com", role = c("aut", "cph")),
@@ -12,11 +12,10 @@ Authors@R: c(
     person("Danilo Roberti Alves de", "Almeida", email = "daniloflorestas@gmail.com", role = c("aut","ctb")),
     person("Celso H. L.", "Silva Junior", email = "celso.junior@inpe.br", role = c("aut","ctb")),
     person("Carine", "Klauberg", email = "carine_klauberg@hotmail.com", role = c("aut","ctb")),
-    person("Burton", "Garbow", email = "", role = ("cph"), comment = "Is the author of the MINPACK-1 Least Squares Fitting Library"),
-    person("Kenneth", "Hillstrom", email = "", role = ("cph"), comment = "Is the author of the MINPACK-1 Least Squares Fitting Library"),
-    person("Jorge", "More", email = "", role = ("cph"), comment = "Is the author of the MINPACK-1 Least Squares Fitting Library"),
-    person("Craig", "Markwardt", email = "", role = ("cph"), comment = "Is the author of the enhanced MINPACK-1 Least Squares Fitting Library"))
-Maintainer: Carlos Alberto Silva <carlos_engflorestal@outlook.com>
+    person("Burton", "Garbow", email = "", role = ("cph"), comment = "Author of the MINPACK-1 Least Squares Fitting Library"),
+    person("Kenneth", "Hillstrom", email = "", role = ("cph"), comment = "Author of the MINPACK-1 Least Squares Fitting Library"),
+    person("Jorge", "More", email = "", role = ("cph"), comment = "Author of the MINPACK-1 Least Squares Fitting Library"),
+    person("Craig", "Markwardt", email = "", role = ("cph"), comment = "Author of the enhanced MINPACK-1 Least Squares Fitting Library"))
 Description: Set of tools for downloading, reading, visualizing and processing GEDI Level1B, Level2A and Level2B data.
 License: GPL-3
 Encoding: UTF-8
@@ -26,6 +25,7 @@ Imports:
   bit64,
   curl,
   data.table,
+  e1071,
   fs,
   getPass,
   ggplot2,
@@ -36,8 +36,11 @@ Imports:
   rgdal,
   rgeos,
   RColorBrewer,
+  Rdpack,
+  Rcpp,
   sp,
   stats
+LinkingTo: Rcpp
 Suggests:
   lattice,
   leaflet,
@@ -47,13 +50,17 @@ Suggests:
   rasterVis,
   viridis
 SystemRequirements: 
+  GDAL (>= 3.0),
   GNU Scientific Library (>= 2.1),
   HDF5 (>= 1.8.13),
-  libgeotiff (>= 1.4.0),
   szip (>= 2.1),
   zlib (>= 1.2)
 NeedsCompilation: yes
 RoxygenNote: 7.1.1
-BugReports: https://groups.yahoo.com/neo/groups/rGEDI
-URL: https://github.com/carlos-alberto-silva/rGEDI
+Roxygen: list(markdown = TRUE)
+RdMacros: Rdpack 
+BugReports: https://github.com/carlos-alberto-silva/rGEDI/issues
+URL: 
+  https://github.com/carlos-alberto-silva/rGEDI,
+  http://rgedi.r-forge.r-project.org/
 Copyright: inst/COPYRIGHTS
